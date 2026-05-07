@@ -1,0 +1,63 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+.terraform.lock.hcl
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Pulumi
+.pulumi/
+Pulumi.*.yaml.bak
+
+# AWS credentials — NEVER commit
+.aws/
+*.pem
+*.key
+credentials
+*credentials*
+
+# Secrets
+.env
+.env.*
+*.secret
+secrets.yaml
+secrets.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Helm
+*.tgz
+
+# Logs
+*.log
+logs/
+
+# Temp
+tmp/
+temp/
