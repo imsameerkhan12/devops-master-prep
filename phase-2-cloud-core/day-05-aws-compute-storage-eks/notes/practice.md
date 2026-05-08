@@ -1064,10 +1064,20 @@ bash create.sh
 **Cluster delete karna:**
 ```bash
 bash destroy.sh
-# Kya karta hai:
-#   1. Confirmation maangta hai
-#   2. eksctl se cluster + node group + endpoints sab delete
-#   3. VPC/subnets/IGW chhodta hai (free hain)
+# Kya karta hai (3 steps):
+#   1. Node group delete + wait
+#   2. Cluster delete + wait
+#   3. Sab VPC interface endpoints delete (eksctl existing VPC mein ye nahi karta)
+# VPC/subnets/IGW chhodta hai — free hain, kal reuse karenge
+```
+
+**Important — destroy.sh mein 3rd step kyu zaroor hai:**
+```
+eksctl — jab apna VPC banata hai → delete pe sab saaf karta hai
+eksctl — jab existing VPC use karta hai → VPC endpoints DELETE NAHI karta
+
+Isliye destroy.sh manually endpoints delete karta hai:
+aws ec2 delete-vpc-endpoints --vpc-endpoint-ids <all interface endpoints>
 ```
 
 **PowerShell se bhi run kar sakte ho:**
