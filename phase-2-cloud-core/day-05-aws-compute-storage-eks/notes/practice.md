@@ -660,7 +660,7 @@ Nginx Pod
 ```
 Phase 1 — Console   → AWS Console se cluster + app deploy
 Phase 2 — CLI       → eksctl + kubectl se same
-Phase 3 — IaC       → Terraform se poora cluster + app
+Phase 3 — IaC       → OpenTofu se poora cluster + app
 ```
 
 ---
@@ -975,7 +975,7 @@ CLI (Phase 2) — ek command mein sab:
     --nodes 1 \
     --private-networking  # handles endpoints automatically
 
-IaC (Phase 3) — Terraform se repeatable, version controlled
+IaC (Phase 3) — OpenTofu se repeatable, version controlled
 ```
 
 ### Next Steps
@@ -1092,7 +1092,7 @@ Pehle (existing VPC):
 Ab (eksctl ka VPC):
   eksctl delete cluster --wait → SABA KUCH gone ✅
   No orphaned resources — zero manual cleanup
-  Terraform pe jaane ke liye perfect pattern
+  OpenTofu pe jaane ke liye perfect pattern
 ```
 
 **PowerShell se bhi run kar sakte ho:**

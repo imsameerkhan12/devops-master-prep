@@ -33,9 +33,11 @@
 
 ## IaC Rapid Fire
 
-- TF state: S3 + DynamoDB lock in prod. Never commit tfstate
-- Drift: manual change outside TF. Detect via `terraform plan` in CI
-- Pulumi = real code (TS/Python/Go). TF = HCL declarative
+- OpenTofu = Terraform fork (BSL license change 2023 → Linux Foundation, MPL 2.0, same HCL)
+- State: S3 backend + `use_lockfile = true` — DynamoDB NOT needed (OpenTofu 1.8+ / TF 1.10+)
+- Never commit tfstate — secrets plaintext inside
+- Drift: manual change outside tofu. Detect via `tofu plan` in CI (`-detailed-exitcode`)
+- Pulumi = real code (TS/Python/Go). OpenTofu = HCL declarative
 - Module: pin with `?ref=v1.2.0` git tag. Never `main` in prod
 
 ## CI/CD Rapid Fire

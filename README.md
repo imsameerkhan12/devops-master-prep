@@ -2,7 +2,7 @@
 
 **15-day structured interview prep** | Senior DevOps / Cloud Engineer  
 **Daily:** 10:00 AM – 1:00 PM (3 hours) | **Total:** 45 hours  
-**Goal:** Interview-ready across AWS, K8s, Terraform, CI/CD, Observability, System Design
+**Goal:** Interview-ready across AWS, K8s, OpenTofu, CI/CD, Observability, System Design
 
 ---
 
@@ -13,7 +13,7 @@
 | [Phase 1: Foundation](phase-1-foundation/) | 1–3 | Linux, Networking, STAR Stories | Behavioral confidence |
 | [Phase 2: Cloud Core](phase-2-cloud-core/) | 4–7 | AWS deep, Azure refresh, GCP touch | Cloud rust removed |
 | [Phase 3: Kubernetes](phase-3-kubernetes/) | 8–10 | K8s deep, Helm, troubleshooting | K8s production-ready |
-| [Phase 4: IaC + CI/CD](phase-4-iac-cicd/) | 11–12 | Terraform, Pulumi, GitHub Actions | Pipeline fluency |
+| [Phase 4: IaC + CI/CD](phase-4-iac-cicd/) | 11–12 | OpenTofu, Pulumi, GitHub Actions | Pipeline fluency |
 | [Phase 5: Observability](phase-5-observability/) | 13 | Prometheus, Grafana, OTel, Logging | Triage skills |
 | [Phase 6: Polish](phase-6-mock-polish/) | 14–15 | Mock interviews, system design | Interview-ready |
 

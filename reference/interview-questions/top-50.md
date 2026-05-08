@@ -128,18 +128,24 @@ NLB: L4 (TCP/UDP), ultra-low latency, static IP, TLS pass-through, gaming/IoT.
 
 ## IaC + CI/CD (10 Qs)
 
-**Q1. Terraform state corrupt — recovery?**
-1. Check if S3 backup exists (enable versioning!)
-2. `terraform state pull > state-backup.json`
+**Q0. Terraform vs OpenTofu?**
+HashiCorp changed Terraform license to BSL 1.1 (Aug 2023) — no longer open source. OpenTofu is the Linux Foundation fork (MPL 2.0), drop-in replacement, same HCL syntax, same state format. IBM acquired HashiCorp in 2024. Community standard is now OpenTofu.
+
+**Q1. OpenTofu state corrupt — recovery?**
+1. Check S3 versioning — restore previous version of tfstate
+2. `tofu state pull > state-backup.json`
 3. Manually edit state JSON (last resort)
-4. `terraform import` to re-import resources one by one
-5. Never run `terraform apply` on corrupted state
+4. `tofu import` to re-import resources one by one
+5. Never run `tofu apply` on corrupted state
 
 **Q2. Drift detection in production?**
-`terraform plan` in CI/CD daily (schedule). Alert if plan is non-empty. Tools: driftctl, Atlantis.
+`tofu plan -detailed-exitcode` in CI/CD daily. Exit code 2 = drift exists → alert. Tools: Atlantis (PR-based), driftctl.
 
-**Q3. Pulumi vs Terraform?**
-Terraform: HCL declarative, huge module registry, simple infra. Pulumi: real programming, complex logic, type safety, tests. Use TF for simple infra + team familiarity. Use Pulumi for conditional logic + multi-cloud abstractions.
+**Q3. Pulumi vs OpenTofu?**
+OpenTofu: HCL declarative, huge module registry, simple infra, truly open source. Pulumi: real programming languages (TS/Python/Go), complex logic, type safety, unit tests. Use OpenTofu for straightforward infra + team familiarity. Use Pulumi for conditional logic + multi-cloud abstractions.
+
+**Q3b. OpenTofu state locking?**
+S3 native locking with `use_lockfile = true` (OpenTofu 1.8+ / Terraform 1.10+). No DynamoDB table needed — S3 conditional writes handle the lock file (`.tfstate.tflock`). Old approach was DynamoDB — avoid in new setups.
 
 **Q4. Multi-env module structure?**
 ```

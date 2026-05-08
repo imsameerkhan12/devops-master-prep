@@ -1,22 +1,91 @@
-# Day 11: Terraform + Pulumi Deep
+# Day 11: OpenTofu + Pulumi Deep
 
-## Terraform State Management
+> **Note:** We use OpenTofu — NOT Terraform.
+> HashiCorp changed Terraform license to BSL 1.1 (August 2023) — no longer open source.
+> OpenTofu = Linux Foundation fork, MPL 2.0, drop-in replacement. Same HCL, same state format.
+> IBM acquired HashiCorp in 2024. Community moved to OpenTofu.
 
-### Remote Backend (Production Standard)
+```bash
+# Install
+choco install opentofu
+
+# Commands — same pattern, different binary
+tofu init
+tofu plan
+tofu apply
+tofu destroy
+```
+
+---
+
+## State Management
+
+### Why state exists
+```
+tofu apply karta hai → resources banata hai
+State file = "kya ban gaya" ka record
+Without state → OpenTofu nahi jaanta kya exist karta hai → sab recreate ho jaata
+```
+
+### Local state (never in production)
+```
+tofu.tfstate → sirf teri machine pe
+Team = conflict, corruption
+Git pe push → secrets plaintext mein leak
+```
+
+### Remote Backend — S3 (Modern — Terraform 1.10+ / OpenTofu 1.8+)
+
 ```hcl
 terraform {
   backend "s3" {
-    bucket         = "my-tfstate-prod"
-    key            = "eks/terraform.tfstate"
-    region         = "us-east-1"
-    dynamodb_table = "terraform-lock"   # prevents concurrent apply
-    encrypt        = true
+    bucket       = "devops-lab-tfstate"
+    key          = "eks/tofu.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true   # S3 native locking — DynamoDB nahi chahiye
   }
 }
 ```
 
-**Why locking:** Two engineers run `terraform apply` simultaneously → state corruption. DynamoDB lock prevents it.  
-**NEVER commit:** `terraform.tfstate` contains secrets in plaintext.
+**DynamoDB wala purana tarika tha:**
+```hcl
+# OLD — avoid
+backend "s3" {
+  dynamodb_table = "terraform-lock"   # extra resource, extra cost, extra maintenance
+}
+
+# NEW — OpenTofu 1.8+ / Terraform 1.10+
+backend "s3" {
+  use_lockfile = true   # S3 conditional writes se locking — koi extra resource nahi
+}
+```
+
+**Kya hota hai `use_lockfile = true` se:**
+```
+tofu apply start → S3 mein .tfstate.tflock file banata hai
+Doosra apply try kare → lock file dekhe → fail with "state locked"
+Apply complete → lock file delete
+```
+
+**Backend setup script:**
+```bash
+# Pehle S3 bucket banao (sirf ek baar)
+aws s3api create-bucket \
+  --bucket devops-lab-tfstate \
+  --region us-east-1
+
+# Versioning enable karo (rollback ke liye)
+aws s3api put-bucket-versioning \
+  --bucket devops-lab-tfstate \
+  --versioning-configuration Status=Enabled
+
+# Encryption enable karo
+aws s3api put-bucket-encryption \
+  --bucket devops-lab-tfstate \
+  --server-side-encryption-configuration \
+  '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+```
 
 ---
 
@@ -24,24 +93,23 @@ terraform {
 
 | | Workspaces | Separate State Files |
 |-|------------|---------------------|
-| Structure | Same code, different state | Different dirs/repos per env |
+| Structure | Same code, different state | Different dirs per env |
 | Isolation | Weak (risk of mixing) | **Strong** |
-| Code duplication | None | Some |
 | Recommendation | Dev/test only | **Production** |
 
 **Best pattern:**
 ```
 infra/
-├── modules/          # reusable modules (VPC, EKS, RDS)
+├── modules/          # reusable modules (vpc, eks, rds)
 ├── envs/
-│   ├── dev/          # uses modules, dev tfvars, dev state
+│   ├── dev/          # uses modules, dev tfvars, dev state bucket
 │   ├── staging/
 │   └── prod/         # separate state, separate AWS account ideally
 ```
 
 ---
 
-## Terraform Modules
+## OpenTofu Modules
 
 ```hcl
 module "vpc" {
@@ -53,66 +121,61 @@ module "vpc" {
 ```
 
 **Best practices:**
-- Always pin with `?ref=v1.2.0` (git tag) — never use `main` in prod
+- Always pin with `?ref=v1.2.0` — never `main` in prod
 - Module structure: `main.tf`, `variables.tf`, `outputs.tf`
-- Publish to Terraform Registry or internal module repo
+- Community modules: [registry.opentofu.org](https://registry.opentofu.org) — compatible with Terraform Registry modules
 
 ---
 
 ## Power User Commands
 
 ```bash
-# Import existing resource into state (without recreating)
-terraform import aws_instance.web i-1234abcd
+# Import existing resource (without recreating)
+tofu import aws_instance.web i-1234abcd
 
-# Refactor: rename resource in code without destroying it
-terraform state mv aws_instance.old aws_instance.new
+# Rename resource in code without destroying
+tofu state mv aws_instance.old aws_instance.new
 
-# Remove from state but keep real resource alive
-terraform state rm aws_instance.web
+# Remove from state but keep real resource
+tofu state rm aws_instance.web
 
-# Show what's in state
-terraform state list
-terraform state show aws_instance.web
+# Show state
+tofu state list
+tofu state show aws_instance.web
 
-# Force recreation on next apply
-terraform apply -replace=aws_instance.web
+# Force recreate
+tofu apply -replace=aws_instance.web
 
-# Plan output to file (use in CI/CD)
-terraform plan -out=tfplan
-terraform apply tfplan
+# Plan to file (use in CI/CD)
+tofu plan -out=tfplan
+tofu apply tfplan
 ```
 
 ---
 
 ## Drift Detection
 
-**What:** Manually changed infra (via console/CLI) ≠ Terraform state → drift
-
-**Detection methods:**
 ```bash
-# 1. terraform plan in CI/CD daily — any diff = drift alert
-# 2. driftctl (open source):
-driftctl scan --from tfstate+s3://bucket/state.tfstate
+# 1. tofu plan in CI/CD daily — any diff = drift alert
+# 2. tofu plan -detailed-exitcode
+#    exit 0 = no changes, exit 2 = changes exist
 
-# 3. Atlantis (PR-based) — auto-plan on PR, shows drift
-# 4. Spacelift / env0 — paid, enterprise
+# 3. OpenTofu native (coming) — tofu test
+# 4. Atlantis — PR-based, auto plan on PR
 ```
 
-**Prevention:** SCP / IAM policies that block console changes to Terraform-managed resources.
+**Prevention:** SCPs / IAM policies blocking console changes to OpenTofu-managed resources.
 
 ---
 
-## Pulumi Deep
+## Pulumi
 
-### Why Pulumi Over Terraform?
+### Why Pulumi over OpenTofu?
 - Real programming languages (TypeScript, Python, Go, C#)
-- Full logic: loops, classes, conditionals, recursion
+- Full logic: loops, classes, conditionals
 - Type safety + IDE autocomplete
 - Unit tests for infra code
-- Same language as your app code
 
-### Stack = Environment
 ```bash
 pulumi stack init production
 pulumi config set aws:region us-east-1
@@ -123,11 +186,7 @@ pulumi preview  # dry run
 pulumi destroy  # tear down
 ```
 
-### Pulumi Operator (YOUR RESUME ITEM)
-- Runs Pulumi inside Kubernetes as a controller
-- Watch a `Stack` CRD → run `pulumi up` automatically
-- GitOps for infra: commit code → operator deploys
-
+### Pulumi Operator (resume item)
 ```yaml
 apiVersion: pulumi.com/v1
 kind: Stack
@@ -137,10 +196,6 @@ spec:
   stack: org/project/production
   projectRepo: https://github.com/org/infra
   branch: main
-  envRefs:
-    AWS_REGION:
-      type: Literal
-      literal: us-east-1
 ```
 
 ---
@@ -149,17 +204,25 @@ spec:
 
 | Situation | Tool |
 |-----------|------|
-| Team prefers declarative, large community modules | Terraform |
-| Complex infra logic (conditional resources, loops) | Pulumi |
-| Multi-cloud with shared abstractions | Pulumi |
-| Simple CRUD infra, stable team | Terraform |
-| IaC inside K8s (GitOps style) | Pulumi Operator |
+| Team prefers declarative, large module ecosystem | OpenTofu |
+| Complex infra logic (loops, conditionals, recursion) | Pulumi |
+| Multi-cloud shared abstractions | Pulumi |
+| IaC inside K8s GitOps style | Pulumi Operator |
+
+---
+
+## Interview — Key Points
+
+> "We use OpenTofu — Terraform's BSL license change in 2023 made it non-open-source. OpenTofu is the Linux Foundation fork under MPL 2.0, drop-in replacement, same HCL."
+
+> "State locking with S3 native `use_lockfile = true` — no DynamoDB table needed since OpenTofu 1.8. S3 conditional writes handle the lock."
 
 ---
 
 ## Hands-on Checklist
-- [ ] Terraform module: VPC + EKS + node group, reusable
-- [ ] Remote backend: S3 + DynamoDB, verify state is remote
-- [ ] `terraform import` a manually-created resource
+- [ ] OpenTofu install — `choco install opentofu`
+- [ ] S3 backend setup — bucket + versioning + encryption
+- [ ] Module: VPC + EKS + node group, reusable
+- [ ] `tofu import` a manually-created resource
+- [ ] Simulate drift: console change → `tofu plan` shows diff
 - [ ] Pulumi TypeScript stack for same VPC
-- [ ] Simulate drift: console change → `terraform plan` shows diff
