@@ -312,74 +312,75 @@ Used **"VPC and more"** option — AWS auto-created everything:
 
 ---
 
-### Step 2 — EC2 Bastion + Private EC2 (pending)
+### Step 2 — EC2 Launch ✅
 
+**What happened:**
+- EC2 `devops-lab-vm` launched in **private subnet** (`subnet-0da15a099f010105f — devops-lab-subnet-private2-us-east-1b`)
+- Instance ID: `i-0e2b1bfdbb53c85e3`
+- Private IP: `10.0.159.203`
+- Public IP was assigned (`54.80.208.140`) but SSH timed out — **private subnet has no IGW route**
+- Key pair: `devops-lab-vm-key.pem` (stored in Downloads)
+
+**What we learned:**
+- Private subnet mein public IP hone ke bawajood SSH nahi hota — route table mein IGW entry nahi hoti
+- SSH timeout = SG issue nahi, routing issue tha
+
+**Bastion concept:**
+```
+Internet
+    │
+    ▼
+Bastion Host (Public Subnet)   ← Jump server — single controlled entry point
+    │ SSH
+    ▼
+Private EC2 (Private Subnet)   ← Actual server — never exposed to internet directly
+```
+
+**Why bastion / Session Manager:**
+- Private EC2 direct internet se reachable nahi — intentional security
+- Bastion = SSH ke liye, Session Manager = modern way (no SSH port needed)
+
+---
+
+### Step 3 — Session Manager Connect (attempted)
+
+**Why Session Manager over SSH:**
+- No port 22 open karna padta
+- No key pair manage karna padta
+- Full audit trail in CloudTrail
+- Works even in private subnet — SSM Agent polls AWS endpoint outbound
+
+**Steps:**
+1. IAM Role banao → Trusted entity: EC2 → Policy: `AmazonSSMManagedInstanceCore`
+2. EC2 → Actions → Security → Modify IAM Role → attach role
+3. EC2 Console → Connect → **Session Manager tab** → Connect
+
+**Note:** Amazon Linux 2023 mein SSM Agent pre-installed hota hai.
+
+**IAM Permission fix karo (one time on Windows):**
 ```bash
-# Windows — permission fix (one time)
-icacls "C:\Users\Sameer\.ssh\devops-lab-key.pem" /inheritance:r /grant:r "%USERNAME%:R"
-
-# SSH to Bastion
-ssh -i "C:\Users\Sameer\.ssh\devops-lab-key.pem" ec2-user@<BASTION-PUBLIC-IP>
-
-# SSH to Private EC2 from Bastion
-ssh -i devops-lab-key.pem ec2-user@<PRIVATE-EC2-IP>
-
-# Test NAT (will FAIL — no NAT Gateway created)
-curl https://google.com
+icacls "C:\Users\Sameer\Downloads\devops-lab-vm-key.pem" /inheritance:r /grant:r "%USERNAME%:R"
 ```
 
 ---
 
-### Step 3 — IAM Role + CLI Test (pending)
+### Step 4 — S3 Endpoint ✅ (DONE via VPC wizard)
 
-```bash
-aws sts get-caller-identity    # confirm role attached
-aws s3 ls                       # list buckets via instance role
-```
-
-Custom least-privilege policy:
-```json
-{
-  "Effect": "Allow",
-  "Action": ["s3:GetObject", "s3:ListBucket"],
-  "Resource": [
-    "arn:aws:s3:::YOUR-BUCKET",
-    "arn:aws:s3:::YOUR-BUCKET/*"
-  ]
-}
-```
+S3 Gateway endpoint already created: `vpce-0d48d3ad70015b9ac`
+Associated with private route tables automatically.
 
 ---
 
-### Step 4 — SG Rules Test (pending)
-
-1. Remove SSH rule from private EC2 SG → SSH fails
-2. Re-add rule → SSH works instantly
-3. **No reboot needed** — SG changes are immediate
-
----
-
-### Step 5 — S3 Endpoint (DONE via VPC wizard)
-
-S3 Gateway endpoint already created and associated with private route tables.
-Verify later from private EC2: `aws s3 ls` should route through endpoint, not internet.
-
----
-
-### Step 6 — IRSA POC (tomorrow — needs EKS cluster)
+### Step 5 — IRSA POC (pending — needs EKS cluster)
 
 ```bash
 # Install eksctl
-# Create cluster
 eksctl create cluster --name irsa-lab --region us-east-1 --nodes 1
-
-# Enable OIDC
 eksctl utils associate-iam-oidc-provider --cluster irsa-lab --approve
 
 # Create IAM role scoped to SA
 # Annotate ServiceAccount
-# Deploy test pod
-# aws s3 ls inside pod — verify access
+# Deploy test pod → aws s3 ls inside pod
 
 # CLEANUP (mandatory)
 eksctl delete cluster --name irsa-lab
@@ -387,14 +388,16 @@ eksctl delete cluster --name irsa-lab
 
 ---
 
-### Destroy Order (after each session)
+### Cleanup — What Costs Money
 
 ```
-1. EC2 instances  → Terminate (not stop — stopped EC2 still charges EBS)
-2. NAT Gateway    → Delete (not created today)
-3. Elastic IP     → Release (not created today)
-4. VPC            → Delete (optional, free)
+EC2 instances  → TERMINATE (not stop — stopped EC2 still charges EBS)
+NAT Gateway    → not created — skip
+Elastic IP     → not created — skip
+VPC/Subnets/IGW/SG/Route Tables → FREE — can keep
 ```
+
+**Only EC2 costs money — terminate karo, bill zero.**
 
 ---
 
@@ -405,10 +408,9 @@ eksctl delete cluster --name irsa-lab
 | VPC ID | `vpc-0b3ef75987ebd61cf` |
 | S3 Endpoint ID | `vpce-0d48d3ad70015b9ac` |
 | IGW ID | `igw-0bfff169be1484336` |
-| Bastion public IP | |
-| Private EC2 private IP | |
-| curl google.com result | |
-| aws sts get-caller-identity | |
-| aws s3 ls output | |
-| SG test observation | |
+| EC2 Instance ID | `i-0e2b1bfdbb53c85e3` |
+| EC2 Subnet | `devops-lab-subnet-private2-us-east-1b` |
+| EC2 Private IP | `10.0.159.203` |
+| SSH result | Timeout — private subnet, no IGW route |
+| Session Manager | IAM role needed — `AmazonSSMManagedInstanceCore` |
 | EC2 terminated at | |
