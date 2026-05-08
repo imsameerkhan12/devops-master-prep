@@ -513,14 +513,127 @@ spec:
 
 ---
 
-## 8. Our App — S3 Bucket Lister
+## 8. Pod Identity — IRSA ka Modern Alternative
+
+### Hindi — Kya hai
+
+```
+Same goal: Pod ko AWS IAM permissions dena
+IRSA      = OIDC federation → STS → temp credentials (complex setup)
+Pod Identity = Agent based → simpler setup, same result
+```
+
+**IRSA vs Pod Identity:**
+
+| | IRSA | Pod Identity |
+|---|---|---|
+| Mechanism | OIDC → STS AssumeRoleWithWebIdentity | Pod Identity Agent (daemonset) |
+| Setup | Complex — OIDC provider + trust policy | Simple — direct association |
+| Cross-account | ✅ Supported | ❌ Same account only |
+| EKS version | All versions | 1.24+ |
+| Best for | Multi-account, complex | Simple same-account |
+
+### Pod Identity Flow
+
+```
+STEP 1 — Pod Identity Agent install karo (add-on — already selected)
+  EKS ke andar daemonset chalta hai har node pe
+
+STEP 2 — IAM Role banao
+  Trust Policy mein pods.eks.amazonaws.com principal
+  {
+    "Principal": {
+      "Service": "pods.eks.amazonaws.com"
+    },
+    "Action": [
+      "sts:AssumeRole",
+      "sts:TagSession"
+    ]
+  }
+  Permission Policy: s3:ListBuckets
+
+STEP 3 — Pod Identity Association banao (AWS side)
+  EKS → Cluster → Access → Pod Identity Associations
+  IAM Role + Namespace + ServiceAccount name specify karo
+
+STEP 4 — K8s ServiceAccount banao (annotation nahi chahiye!)
+  apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: s3-reader-sa
+    namespace: default
+  # No annotation needed — Pod Identity handles it
+
+STEP 5 — Pod mein ServiceAccount specify karo
+  spec:
+    serviceAccountName: s3-reader-sa
+
+STEP 6 — Pod Identity Agent magic
+  Pod start hota hai
+      │
+      ▼
+  Agent intercept karta hai credentials request
+      │
+      ▼
+  AWS se temp credentials fetch karta hai
+      │
+      ▼
+  Pod ko inject karta hai — AWS SDK use karta hai automatically
+```
+
+**Key difference from IRSA:**
+```
+IRSA:         SA pe annotation chahiye + OIDC provider setup
+Pod Identity: Koi annotation nahi — association AWS side pe hoti hai
+              Clean separation — K8s objects AWS se decouple hote hain
+```
+
+### English — Interview Answer
+
+> "Pod Identity is the newer, simpler alternative to IRSA for granting AWS permissions to EKS pods. Instead of OIDC federation, it uses a Pod Identity Agent daemonset that runs on each node. You create an IAM role with pods.eks.amazonaws.com as the trusted service, then create a Pod Identity Association in EKS linking the role to a specific namespace and service account. No annotation on the ServiceAccount is needed — AWS manages the association separately, keeping Kubernetes objects clean and decoupled from AWS-specific configuration. The limitation is it only works for same-account access — for cross-account scenarios IRSA is still needed."
+
+---
+
+## 9. Ingress — Traefik (Cloud Agnostic Standard)
+
+### Hindi — Kyu Traefik
+
+```
+AWS LB Controller  = AWS only — vendor lock-in
+Nginx Ingress      = Deprecated ho raha hai
+Traefik            = Cloud agnostic, Gateway API support, production standard
+Kubernetes Gateway API = Official K8s future standard (Ingress ka replacement)
+```
+
+**Traefik = Gateway API implement karta hai — portable, modern**
+
+```
+Hamare app mein:
+Browser
+    │
+    ▼
+AWS NLB (Traefik ne banaya — LoadBalancer Service)
+    │
+    ▼
+Traefik (Ingress Controller)
+    │
+    ▼
+HTTPRoute (Gateway API resource)
+    │
+    ▼
+Service → Nginx Pods
+```
+
+---
+
+## 10. Our App — S3 Bucket Lister
 
 **What we are building:**
 ```
 Browser
     │
     ▼
-ALB (Ingress — internet-facing)
+NLB → Traefik (Gateway API)
     │
     ▼
 Service (ClusterIP)
@@ -529,7 +642,7 @@ Service (ClusterIP)
 Nginx Pod
     │
     ├── HTML page serve karta hai
-    └── S3 API call (IRSA se credentials — no hardcoding)
+    └── S3 API call (Pod Identity se credentials — no hardcoding)
          │
          ▼
         S3 bucket list → HTML mein show karo
@@ -537,17 +650,68 @@ Nginx Pod
 
 **K8s objects needed:**
 ```
-1. ServiceAccount  → s3-reader-sa (IRSA annotated)
-2. Deployment      → nginx pods (2 replicas)
-3. Service         → ClusterIP (pods group karo)
-4. Ingress         → ALB se bahar expose karo
+1. ServiceAccount     → s3-reader-sa (no annotation needed — Pod Identity)
+2. Deployment         → nginx pods (2 replicas)
+3. Service            → ClusterIP
+4. Gateway + HTTPRoute → Traefik se bahar expose karo
 ```
 
-**3 Phases of implementation:**
+**4 Phases of implementation:**
 ```
-Phase 1 — Console   → AWS Console se cluster banao, visually samjho
-Phase 2 — CLI       → eksctl + kubectl se same cheez karo
+Phase 1 — Console   → AWS Console se cluster + app deploy
+Phase 2 — CLI       → eksctl + kubectl se same
 Phase 3 — IaC       → Terraform se poora cluster + app
+```
+
+---
+
+## 11. EKS Cluster — Hands-on Log (Console)
+
+### IAM Roles Created
+
+| Role | Purpose | Policies |
+|---|---|---|
+| `devops-lab-eks-cluster-role` | EKS Control Plane | AmazonEKSClusterPolicy |
+| `devops-lab-eks-node-role` | Worker Nodes | AmazonEKSWorkerNodePolicy, AmazonEKS_CNI_Policy, AmazonEC2ContainerRegistryReadOnly |
+| `AmazonEKSPodIdentityAmazonEBSCSIDriverRole` | EBS CSI Driver (Pod Identity) | AmazonEBSCSIDriverPolicy |
+| `AmazonEKSPodIdentityAmazonVPCCNIRole` | VPC CNI (Pod Identity) | AmazonEKS_CNI_Policy |
+
+### Cluster Configuration
+
+| Setting | Value | Why |
+|---|---|---|
+| Name | `devops-lab-eks` | |
+| K8s Version | `1.33` | n-1 stable — 1.35 bleeding edge |
+| EKS Auto Mode | Disabled | Manual control — learning |
+| Cluster Role | `devops-lab-eks-cluster-role` | Control plane AWS API access |
+| VPC | `devops-lab-vpc` | Dedicated VPC — not default |
+| Subnets | 2 private subnets | Nodes private mein — best practice |
+| Endpoint | Public and Private | kubectl bahar se + nodes VPC ke andar |
+| Auth Mode | EKS API | Modern — aws-auth ConfigMap legacy hai |
+| Control Plane Logs | API server + Audit ON | Security + debugging |
+| Deletion Protection | OFF | Lab — easy cleanup |
+
+### Add-ons Selected
+
+| Add-on | Why |
+|---|---|
+| Amazon VPC CNI | Pod networking — real VPC IPs |
+| kube-proxy | Service networking |
+| CoreDNS | Cluster DNS |
+| Amazon EBS CSI Driver | Persistent storage |
+| Amazon EKS Pod Identity Agent | Pod Identity — modern IRSA alternative |
+| Metrics Server | HPA — autoscaling |
+
+### Next Steps (cluster Active hone ke baad)
+
+```
+1. Node Group banao — devops-lab-eks-node-role attach karo
+2. kubectl connect karo — aws eks update-kubeconfig
+3. Traefik install karo — Helm se
+4. Pod Identity Association banao — S3 access ke liye
+5. App deploy karo — Nginx + S3 lister
+6. Test karo — browser se
+7. CLEANUP — cluster delete karo ($0.10/hr)
 ```
 
 ---
@@ -565,7 +729,8 @@ Phase 3 — IaC       → Terraform se poora cluster + app
 | Pod | Smallest unit — mortal, directly deploy mat karo |
 | Deployment | Pod manager — replicas, rolling updates, rollback |
 | Service | Stable endpoint — pod IPs change, service IP fixed |
-| Ingress | HTTP routing — 1 ALB for multiple services |
-| AWS LB Controller | Ingress → actual ALB banata hai (IRSA use karta hai) |
-| IRSA | Per-pod IAM identity — OIDC federation via STS |
+| Traefik | Cloud-agnostic ingress — Gateway API implement karta hai |
+| Gateway API | K8s official future — Ingress ka replacement |
+| IRSA | Per-pod IAM — OIDC federation, cross-account support |
+| Pod Identity | Simpler IRSA alternative — same account, no SA annotation |
 | ServiceAccount | Tu banata hai kubectl se — pod mein mount automatic |
