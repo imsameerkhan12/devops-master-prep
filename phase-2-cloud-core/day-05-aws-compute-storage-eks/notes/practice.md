@@ -1011,15 +1011,13 @@ scripts/
 ### cluster-config.yaml — Kya cover karta hai
 
 ```yaml
-# Existing VPC reuse karta hai (Day 4 ka — free hai)
-vpc:
-  id: vpc-0b3ef75987ebd61cf
-  subnets:
-    private:
-      us-east-1a: subnet-09d8c3b1f7ef7c079
-      us-east-1b: subnet-0da15a099f010105f
+# eksctl khud VPC banata hai — hardcoded IDs nahi
+# Kisi bhi AWS account pe fresh run karega
+availabilityZones:
+  - us-east-1a
+  - us-east-1b
 
-# KEY: yahi sab 7 VPC endpoints automatically banata hai
+# KEY: yahi sab VPC endpoints automatically banata hai
 # ec2, eks, ecr.api, ecr.dkr, sts, eks-auth, s3 — sab handled
 privateCluster:
   enabled: true
@@ -1031,58 +1029,74 @@ privateCluster:
 # Add-ons — VPC CNI, CoreDNS, kube-proxy, EBS CSI, Pod Identity, Metrics Server
 ```
 
+**Full infrastructure — create se destroy tak:**
+```
+create.sh → eksctl ne banaya:
+  VPC (10.0.0.0/16)
+  ├── Public subnets  (2 AZs) — future load balancer ke liye
+  ├── Private subnets (2 AZs) — EKS nodes yahan
+  ├── Internet Gateway
+  ├── Route tables
+  ├── VPC Endpoints (7) — ec2, eks, ecr.api, ecr.dkr, sts, eks-auth, s3
+  └── EKS Cluster + Node Group + Add-ons
+
+destroy.sh → eksctl ne delete kiya:
+  Sab kuch — ek command, koi bhi resource nahi bachega
+```
+
 **Sabse bada advantage:**
 ```
-Console (Day 1) = Manually 7 endpoints banaye, debug kiya, 3+ ghante
-eksctl          = privateCluster: enabled: true → sab automatic — 15 min
+Console (Day 1) = Manually sab banaya, debug kiya, 3+ ghante
+eksctl          = bash create.sh → 15-20 min — poora infra ready
+                  bash destroy.sh → 10-15 min — sab gone, bill zero
 ```
 
 ### How to Use
 
 **Prerequisites (Windows mein):**
 ```powershell
-# eksctl install karo — agar nahi hai
 choco install eksctl
-
-# Verify
-eksctl version
+eksctl version  # verify
 ```
 
-**Kal cluster banana:**
+**Fresh infra banana (kal ya kabhi bhi):**
 ```bash
 # Git Bash / WSL se run karo
 cd D:/DEVOPS-REMASTER/phase-2-cloud-core/day-05-aws-compute-storage-eks/scripts
 
 bash create.sh
 # Kya karta hai:
-#   1. eksctl cluster-config.yaml se cluster + node group + add-ons banata hai (~15 min)
-#   2. kubectl kubeconfig update karta hai
-#   3. sameer IAM user ke liye EKS Access Entry banata hai
-#   4. kubectl get nodes se verify karta hai
+#   1. VPC + subnets + IGW + route tables banata hai
+#   2. VPC endpoints (7) banata hai
+#   3. EKS cluster + node group + add-ons banata hai (~15 min)
+#   4. kubectl configure karta hai
+#   5. sameer IAM user ke liye EKS Access Entry banata hai
 ```
 
-**Cluster delete karna:**
+**Sab kuch delete karna:**
 ```bash
 bash destroy.sh
-# Kya karta hai (3 steps):
-#   1. Node group delete + wait
-#   2. Cluster delete + wait
-#   3. Sab VPC interface endpoints delete (eksctl existing VPC mein ye nahi karta)
-# VPC/subnets/IGW chhodta hai — free hain, kal reuse karenge
+# Kya karta hai:
+#   eksctl delete cluster --wait
+#   Ek command — sab gone: cluster + nodes + endpoints + VPC + subnets + IGW
+#   Bill: ZERO
 ```
 
-**Important — destroy.sh mein 3rd step kyu zaroor hai:**
+**Why eksctl apna VPC manage karna better hai:**
 ```
-eksctl — jab apna VPC banata hai → delete pe sab saaf karta hai
-eksctl — jab existing VPC use karta hai → VPC endpoints DELETE NAHI karta
+Pehle (existing VPC):
+  eksctl delete cluster → cluster gone ✅
+  VPC endpoints → manually delete karne padte ✅❌ (bhool gaye toh bill aata)
+  VPC/subnets → free, reh jaate hain
 
-Isliye destroy.sh manually endpoints delete karta hai:
-aws ec2 delete-vpc-endpoints --vpc-endpoint-ids <all interface endpoints>
+Ab (eksctl ka VPC):
+  eksctl delete cluster --wait → SABA KUCH gone ✅
+  No orphaned resources — zero manual cleanup
+  Terraform pe jaane ke liye perfect pattern
 ```
 
 **PowerShell se bhi run kar sakte ho:**
 ```powershell
-# eksctl install hone ke baad
 $env:PATH = $env:PATH + ";C:\ProgramData\chocolatey\bin;C:\Program Files\Amazon\AWSCLIV2"
 
 eksctl create cluster -f scripts\cluster-config.yaml --profile sameer

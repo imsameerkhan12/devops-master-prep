@@ -8,25 +8,21 @@ metadata:
   tags:
     project: devops-lab
 
-# Reuse existing VPC from Day 4 (free — VPC doesn't cost money)
-vpc:
-  id: vpc-0b3ef75987ebd61cf
-  subnets:
-    private:
-      us-east-1a:
-        id: subnet-09d8c3b1f7ef7c079
-      us-east-1b:
-        id: subnet-0da15a099f010105f
+# eksctl creates full VPC — public + private subnets, IGW, route tables
+# No hardcoded IDs — works fresh on any AWS account
+availabilityZones:
+  - us-east-1a
+  - us-east-1b
 
-# privateCluster = eksctl automatically creates ALL required VPC endpoints
-# No NAT Gateway needed — eksctl handles: ecr.api, ecr.dkr, eks, ec2, sts, s3, eks-auth
+# privateCluster = eksctl creates ALL required VPC endpoints automatically
+# Covers: ecr.api, ecr.dkr, eks, ec2, sts, s3, cloudformation, autoscaling
+# additionalEndpointServices = eks-auth needed for Pod Identity Agent
 privateCluster:
   enabled: true
   additionalEndpointServices:
     - "sts"
     - "eks-auth"
 
-# OIDC = needed for IRSA (even if using Pod Identity — good to have)
 iam:
   withOIDCIssuer: true
 
@@ -36,10 +32,10 @@ managedNodeGroups:
     desiredCapacity: 1
     minSize: 1
     maxSize: 1
-    privateNetworking: true    # nodes sirf private subnets mein
+    privateNetworking: true
     amiFamily: AmazonLinux2023
     volumeSize: 20
-    disableIMDSv1: true        # security best practice — IMDSv2 only
+    disableIMDSv1: true
     iam:
       attachPolicyARNs:
         - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
