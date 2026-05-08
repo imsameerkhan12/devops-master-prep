@@ -740,16 +740,58 @@ Taint  = Node pod ko reject karta hai (push away)
 Use case: GPU nodes pe sirf ML pods — costly nodes waste na ho
 ```
 
+### Tools Installed — Windows Setup
+
+| Tool | Version | Install Command | Kyu |
+|---|---|---|---|
+| kubectl | v1.36.0 | `choco install kubernetes-cli` | K8s CLI — cluster se baat karo |
+| helm | v4.1.4 | `choco install kubernetes-helm` | Package manager — Traefik install |
+| aws cli | v2.34.44 | `choco install awscli` | AWS API — cluster connect |
+| kubectx | - | `choco install kubectx` | Fast cluster/namespace switching |
+| kustomize | v5.8.1 | kubectl ke saath built-in | Base + overlay environment management |
+
+**Kustomize kya hai:**
+```
+Same app — 3 environments (dev, staging, prod)
+Base YAML ek — common config
+Overlay — sirf jo alag hai wo likho (replicas, image tag)
+
+Helm vs Kustomize:
+  Helm       = Third party apps install (Traefik, Prometheus)
+  Kustomize  = Apne apps ke environments manage karo
+  Production = Dono saath use karte hain
+```
+
+### AWS Profile Setup (next step)
+
+```powershell
+# Named profile — best practice (default overwrite nahi hoga)
+aws configure --profile devops-lab
+
+# Fill karo:
+# AWS Access Key ID
+# AWS Secret Access Key
+# Region: us-east-1
+# Output format: json
+
+# Use karo:
+$env:AWS_PROFILE = "devops-lab"
+# Ya har command mein:
+aws eks update-kubeconfig --profile devops-lab --region us-east-1 --cluster-name devops-lab-eks
+```
+
 ### Next Steps (node group Active hone ke baad)
 
 ```
-1. kubectl connect karo — aws eks update-kubeconfig
-2. kubectl get nodes — verify
-3. Traefik install karo — Helm se
-4. Pod Identity Association banao — S3 access ke liye
-5. App deploy karo — Nginx + S3 lister
-6. Test karo — browser se
-7. CLEANUP — cluster + node group delete karo ($0.10/hr)
+1. AWS profile configure karo — aws configure --profile devops-lab
+2. kubectl connect karo — aws eks update-kubeconfig
+3. kubectx se cluster select karo
+4. kubectl get nodes — verify
+5. Traefik install karo — Helm se
+6. Pod Identity Association banao — S3 access ke liye
+7. App deploy karo — Nginx + S3 lister
+8. Test karo — browser se
+9. CLEANUP — cluster + node group delete karo ($0.10/hr)
 ```
 
 ---
