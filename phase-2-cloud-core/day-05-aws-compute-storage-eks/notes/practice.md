@@ -997,6 +997,105 @@ Baaki karna hai:
 
 ---
 
+## 12. Phase 2 — CLI Scripts (eksctl)
+
+### Kya banaya
+
+```
+scripts/
+├── cluster-config.yaml   ← eksctl declarative config — poora cluster define
+├── create.sh             ← ek command mein sab banao
+└── destroy.sh            ← ek command mein sab delete karo
+```
+
+### cluster-config.yaml — Kya cover karta hai
+
+```yaml
+# Existing VPC reuse karta hai (Day 4 ka — free hai)
+vpc:
+  id: vpc-0b3ef75987ebd61cf
+  subnets:
+    private:
+      us-east-1a: subnet-09d8c3b1f7ef7c079
+      us-east-1b: subnet-0da15a099f010105f
+
+# KEY: yahi sab 7 VPC endpoints automatically banata hai
+# ec2, eks, ecr.api, ecr.dkr, sts, eks-auth, s3 — sab handled
+privateCluster:
+  enabled: true
+  additionalEndpointServices:
+    - "sts"
+    - "eks-auth"
+
+# Node group — t3.medium, 1 node, private subnets
+# Add-ons — VPC CNI, CoreDNS, kube-proxy, EBS CSI, Pod Identity, Metrics Server
+```
+
+**Sabse bada advantage:**
+```
+Console (Day 1) = Manually 7 endpoints banaye, debug kiya, 3+ ghante
+eksctl          = privateCluster: enabled: true → sab automatic — 15 min
+```
+
+### How to Use
+
+**Prerequisites (Windows mein):**
+```powershell
+# eksctl install karo — agar nahi hai
+choco install eksctl
+
+# Verify
+eksctl version
+```
+
+**Kal cluster banana:**
+```bash
+# Git Bash / WSL se run karo
+cd D:/DEVOPS-REMASTER/phase-2-cloud-core/day-05-aws-compute-storage-eks/scripts
+
+bash create.sh
+# Kya karta hai:
+#   1. eksctl cluster-config.yaml se cluster + node group + add-ons banata hai (~15 min)
+#   2. kubectl kubeconfig update karta hai
+#   3. sameer IAM user ke liye EKS Access Entry banata hai
+#   4. kubectl get nodes se verify karta hai
+```
+
+**Cluster delete karna:**
+```bash
+bash destroy.sh
+# Kya karta hai:
+#   1. Confirmation maangta hai
+#   2. eksctl se cluster + node group + endpoints sab delete
+#   3. VPC/subnets/IGW chhodta hai (free hain)
+```
+
+**PowerShell se bhi run kar sakte ho:**
+```powershell
+# eksctl install hone ke baad
+$env:PATH = $env:PATH + ";C:\ProgramData\chocolatey\bin;C:\Program Files\Amazon\AWSCLIV2"
+
+eksctl create cluster -f scripts\cluster-config.yaml --profile sameer
+aws eks update-kubeconfig --profile sameer --region us-east-1 --name devops-lab-eks
+kubectl get nodes
+```
+
+### Console vs eksctl — Comparison
+
+| | Console (Phase 1) | eksctl (Phase 2) |
+|---|---|---|
+| Time | 3+ hours | 15-20 min |
+| VPC Endpoints | Manual — 7 banaye, debug kiya | Automatic — privateCluster: true |
+| IAM Roles | Manual | Auto-created |
+| Error prone | High | Low |
+| Learning value | ✅ High — sab samjha | Medium |
+| Production use | ❌ Never | ✅ Dev/staging |
+| Interview answer | "Console se seekha" | "eksctl YAML use karta hoon" |
+
+> **Why Console pehle:** Jab tak tu Console pe struggle nahi karta — endpoints kyu chahiye, IAM roles kya karte hain — eksctl ki magic samajh nahi aati. Ab samjha ki `privateCluster: true` ke peeche 7 endpoints hain.
+
+---
+
 ## Concept Summary
 
 | Concept | Key Point |
