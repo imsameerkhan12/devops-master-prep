@@ -702,16 +702,54 @@ Phase 3 — IaC       → Terraform se poora cluster + app
 | Amazon EKS Pod Identity Agent | Pod Identity — modern IRSA alternative |
 | Metrics Server | HPA — autoscaling |
 
-### Next Steps (cluster Active hone ke baad)
+### Node Group Configuration ✅
+
+| Setting | Value | Why |
+|---|---|---|
+| Name | `devops-lab-node-group` | |
+| Node IAM Role | `devops-lab-eks-node-role` | Nodes ko cluster join + ECR pull permission |
+| AMI | Amazon Linux 2023 x86_64 | EKS optimized — AWS maintain karta hai |
+| Capacity | On-Demand | Lab — Spot kabhi bhi terminate ho sakta hai |
+| Instance | `t3.medium` | 2 vCPU, 4GB RAM, 17 pods max — lab sweet spot |
+| Disk | 20 GiB | Default kaafi hai |
+| Desired/Min/Max | 1/1/1 | Lab — cost bachao |
+| Subnets | 2 private subnets | Nodes always private mein |
+| Remote access | OFF | SSH mat karo nodes pe — Session Manager use karo |
+| Auto repair | Enabled | Node unhealthy → auto replace — free feature |
+
+### Capacity Types — On-Demand vs Spot
+
+| | On-Demand | Spot |
+|---|---|---|
+| Cost | Full price | 70-90% cheaper |
+| Availability | Guaranteed | AWS kabhi bhi terminate kar sakta hai |
+| Use case | Production, stateful | Batch jobs, stateless, dev |
+
+**Production best practice:** On-Demand baseline + Spot for burst — Karpenter se mix karo
+
+### Labels vs Taints
 
 ```
-1. Node Group banao — devops-lab-eks-node-role attach karo
-2. kubectl connect karo — aws eks update-kubeconfig
+Label  = Pod node ko prefer karta hai (pull)
+         nodeSelector: gpu: "true" → sirf GPU node pe jao
+
+Taint  = Node pod ko reject karta hai (push away)
+         taint: gpu=true:NoSchedule → normal pods yahan nahi aayenge
+                                       sirf tolerating pods aayenge
+
+Use case: GPU nodes pe sirf ML pods — costly nodes waste na ho
+```
+
+### Next Steps (node group Active hone ke baad)
+
+```
+1. kubectl connect karo — aws eks update-kubeconfig
+2. kubectl get nodes — verify
 3. Traefik install karo — Helm se
 4. Pod Identity Association banao — S3 access ke liye
 5. App deploy karo — Nginx + S3 lister
 6. Test karo — browser se
-7. CLEANUP — cluster delete karo ($0.10/hr)
+7. CLEANUP — cluster + node group delete karo ($0.10/hr)
 ```
 
 ---
