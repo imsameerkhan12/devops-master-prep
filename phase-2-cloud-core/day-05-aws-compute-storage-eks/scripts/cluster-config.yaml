@@ -19,9 +19,6 @@ availabilityZones:
 # additionalEndpointServices = eks-auth needed for Pod Identity Agent
 privateCluster:
   enabled: true
-  additionalEndpointServices:
-    - "sts"
-    - "eks-auth"
 
 iam:
   withOIDC: true
