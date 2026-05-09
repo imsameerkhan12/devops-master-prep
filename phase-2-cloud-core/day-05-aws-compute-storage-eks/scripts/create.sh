@@ -28,8 +28,9 @@ VPC_ID=$(aws eks describe-cluster --profile $AWS_PROFILE --region $REGION --name
 SG_ID=$(aws eks describe-cluster --profile $AWS_PROFILE --region $REGION --name $CLUSTER \
   --query "cluster.resourcesVpcConfig.clusterSecurityGroupId" --output text)
 SUBNET_IDS=$(aws ec2 describe-subnets --profile $AWS_PROFILE --region $REGION \
-  --filters "Name=vpc-id,Values=$VPC_ID" "Name=tag:aws:cloudformation:logical-id,Values=SubnetPrivate*" \
-  --query "Subnets[*].SubnetId" --output text | tr '\t' ' ')
+  --filters "Name=vpc-id,Values=$VPC_ID" \
+  --query "Subnets[?MapPublicIpOnLaunch==\`false\`].SubnetId" \
+  --output text | tr '\t' ' ')
 echo "VPC: $VPC_ID | SG: $SG_ID"
 
 # Step 3: Add sts + eks-auth endpoints (needed for Pod Identity Agent)

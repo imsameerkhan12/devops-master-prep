@@ -42,8 +42,6 @@ managedNodeGroups:
 addons:
   - name: vpc-cni
     version: latest
-    wellKnownPolicies:
-      imageBuilder: false
 
   - name: kube-proxy
     version: latest
