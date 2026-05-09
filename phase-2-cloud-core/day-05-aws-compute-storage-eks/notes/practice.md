@@ -1017,13 +1017,12 @@ availabilityZones:
   - us-east-1a
   - us-east-1b
 
-# KEY: yahi sab VPC endpoints automatically banata hai
-# ec2, eks, ecr.api, ecr.dkr, sts, eks-auth, s3 — sab handled
+# KEY: core VPC endpoints automatically banata hai
+# ec2, eks, ecr.api, ecr.dkr, s3 — sab privateCluster se handled
+# sts + eks-auth = create.sh AWS CLI se add karta hai cluster ke baad
+# (eksctl additionalEndpointServices sirf cloudformation + autoscaling support karta hai)
 privateCluster:
   enabled: true
-  additionalEndpointServices:
-    - "sts"
-    - "eks-auth"
 
 # Node group — t3.medium, 1 node, private subnets
 # Add-ons — VPC CNI, CoreDNS, kube-proxy, EBS CSI, Pod Identity, Metrics Server
