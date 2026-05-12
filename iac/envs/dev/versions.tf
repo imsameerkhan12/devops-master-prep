@@ -1,0 +1,30 @@
+# versions.tf — 2 kaam karta hai:
+#   1. Required providers declare karo (kaunsa cloud, kaunsa version)
+#   2. Backend config — state kahan rakho
+
+terraform {
+  required_version = ">= 1.8"  # use_lockfile needs 1.8+
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"  # OpenTofu registry se AWS provider
+      version = "~> 5.0"         # 5.x use karo, 6.x nahi
+    }
+  }
+
+  # Remote state — S3 bucket mein store hoga
+  # use_lockfile = true → S3 native locking, no DynamoDB needed
+  backend "s3" {
+    bucket       = "devops-lab-tofu-state-271169999916"  # bootstrap script se milega
+    key          = "dev/terraform.tfstate"               # S3 path inside bucket
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
+  }
+}
+
+# AWS provider config — region + profile
+provider "aws" {
+  region  = var.aws_region
+  profile = var.aws_profile
+}
