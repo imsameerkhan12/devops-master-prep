@@ -81,12 +81,38 @@ Each day folder has:
 
 ---
 
+## Practice Notes — Day Wise
+
+> Har din ke notes yahan se directly open karo. Practice file = hands-on log + concepts apne shabdon mein.
+
+| Day | Topic | Notes (Theory) | Practice (Hands-on) | Status |
+|-----|-------|---------------|---------------------|--------|
+| Day 1 | Setup + STAR Stories | [README](phase-1-foundation/day-01-setup-and-star-stories/notes/README.md) | — | ✅ |
+| Day 2 | Linux Fundamentals | [README](phase-1-foundation/day-02-linux-fundamentals/notes/README.md) | [practice.md](phase-1-foundation/day-02-linux-fundamentals/notes/practice.md) | ✅ |
+| Day 3 | Networking Deep | [README](phase-1-foundation/day-03-networking-deep/notes/README.md) | [practice.md](phase-1-foundation/day-03-networking-deep/notes/practice.md) | ✅ |
+| Day 4 | AWS Networking + IAM | [README](phase-2-cloud-core/day-04-aws-networking-iam/notes/README.md) | [practice.md](phase-2-cloud-core/day-04-aws-networking-iam/notes/practice.md) | ✅ |
+| Day 5 | AWS Compute + EKS | [README](phase-2-cloud-core/day-05-aws-compute-storage-eks/notes/README.md) | [practice.md](phase-2-cloud-core/day-05-aws-compute-storage-eks/notes/practice.md) | ✅ |
+| Day 6 | AWS Specialized + Azure | [README](phase-2-cloud-core/day-06-aws-specialized-azure/notes/README.md) | — | ⏳ |
+| Day 7 | AWS Practical + GCP | [README](phase-2-cloud-core/day-07-aws-practical-gcp/notes/README.md) | — | ⏳ |
+| Day 8 | K8s Core + Pod Lifecycle | [README](phase-3-kubernetes/day-08-k8s-core-pod-lifecycle/notes/README.md) | — | ⏳ |
+| Day 9 | K8s Networking + Storage | [README](phase-3-kubernetes/day-09-k8s-networking-storage-security/notes/README.md) | — | ⏳ |
+| Day 10 | Helm + Troubleshooting | [README](phase-3-kubernetes/day-10-helm-troubleshooting-patterns/notes/README.md) | — | ⏳ |
+| Day 11 | OpenTofu + Pulumi | [README](phase-4-iac-cicd/day-11-terraform-pulumi/notes/README.md) | [practice.md](phase-4-iac-cicd/day-11-terraform-pulumi/notes/practice.md) | 🔄 |
+| Day 12 | GitHub Actions + Azure DevOps | [README](phase-4-iac-cicd/day-12-github-actions-azure-devops/notes/README.md) | — | ⏳ |
+| Day 13 | Prometheus + Grafana + OTel | [README](phase-5-observability/day-13-prometheus-grafana-otel-logging/notes/README.md) | — | ⏳ |
+| Day 14 | System Design Mock | [README](phase-6-mock-polish/day-14-system-design-mock/notes/README.md) | — | ⏳ |
+| Day 15 | Final Mock + Stories | [README](phase-6-mock-polish/day-15-final-mock-stories/notes/README.md) | — | ⏳ |
+
+**Status:** ✅ Done · 🔄 In Progress · ⏳ Pending
+
+---
+
 ## Reference Links
 
-- [Top 50 Interview Questions](reference/interview-questions/)
+- [Top 50 Interview Questions](reference/interview-questions/top-50.md)
+- [Day-of-Interview Cheatsheet](reference/cheatsheets/day-of-interview.md)
 - [System Design Templates](reference/system-design-templates/)
 - [STAR Behavioral Stories](reference/behavioral-stories/)
-- [Quick-Lookup Cheatsheets](reference/cheatsheets/)
 - [Original PDF Guide](00-guide/Sameer_DevOps_Master_Prep_Guide.pdf)
 
 ---
