@@ -20,6 +20,11 @@ availabilityZones:
 privateCluster:
   enabled: true
 
+vpc:
+  clusterEndpoints:
+    publicAccess: true   # kubectl from laptop works
+    privateAccess: true  # nodes talk to API server within VPC
+
 iam:
   withOIDC: true
 
