@@ -106,24 +106,7 @@ resource "aws_eks_pod_identity_association" "ebs_csi" {
   role_arn        = aws_iam_role.ebs_csi.arn
 }
 
-# EKS Access Entry — sameer IAM user ko cluster admin banao
-# Modern replacement for aws-auth ConfigMap (EKS 1.23+)
-resource "aws_eks_access_entry" "admin" {
-  cluster_name  = module.eks.cluster_name
-  principal_arn = var.admin_iam_user_arn
-  type          = "STANDARD"
-
-  tags = var.tags
-}
-
-resource "aws_eks_access_policy_association" "admin" {
-  cluster_name  = module.eks.cluster_name
-  principal_arn = var.admin_iam_user_arn
-  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
-
-  access_scope {
-    type = "cluster"
-  }
-
-  depends_on = [aws_eks_access_entry.admin]
-}
+# Access Entry not needed here —
+# enable_cluster_creator_admin_permissions = true already creates
+# an admin access entry for whoever runs tofu apply (sameer)
+# Adding a second entry for the same user = ResourceInUseException

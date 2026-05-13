@@ -18,3 +18,7 @@ output "oidc_provider_arn" {
 output "node_group_role_arn" {
   value = module.eks.eks_managed_node_groups["devops-lab"].iam_role_arn
 }
+
+output "node_group_role_name" {
+  value = module.eks.eks_managed_node_groups["devops-lab"].iam_role_name
+}

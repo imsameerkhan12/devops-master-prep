@@ -35,11 +35,6 @@ variable "node_max" {
   default = 1
 }
 
-variable "admin_iam_user_arn" {
-  description = "IAM user ARN to give cluster admin access (sameer)"
-  type        = string
-}
-
 variable "tags" {
   type    = map(string)
   default = {}

@@ -1619,6 +1619,15 @@ tofu destroy -var-file=dev.tfvars
 | Traefik | Gateway API first-class, hot reload, dashboard built-in, auto HTTPS |
 | NGINX vs Traefik | NGINX = reload on change; Traefik = hot reload + Gateway API native |
 | Traefik Dashboard | port 8080 — port-forward (dev), HTTPRoute+auth (staging), disable (prod) |
+| ECR Pull-Through Cache | Docker Hub mirror in private ECR — no NAT GW needed, VPC endpoint se pull |
+| Pull-Through Auth | Secret must be valid JSON: {"username":"...","accessToken":"..."} — no unquoted keys |
+| Secret Format Bug | Shells often strip quotes when creating secrets — verify with get-secret-value |
+| ECR Lifecycle Policy | Keep last N images — attach to repo explicitly (pull-through auto-creates repos) |
+| Pre-create ECR Repos | aws_ecr_repository + depends_on pull-through rule — lifecycle policy needs repo to exist |
+| AWS LBC vs In-tree | LBC = external+ip annotations (separate controller); In-tree = nlb annotation only |
+| Gateway from: All | Traefik Gateway default from: Same — cross-namespace HTTPRoute needs from: All |
+| Traefik Image via ECR | image.registry + image.repository separate — Helm prepends registry to repo |
+| Gateway API CRDs | Traefik v3.7.1 needs v1.5.1 CRDs — standard-install.yaml (not v1.2.1) |
 | Helm Chart | Chart.yaml + values.yaml + templates/ — template karo, hardcode mat karo |
 | Helm Template Syntax | .Values.x, .Release.Name, toYaml\|nindent, include, if/end |
 | Helm Commands | install, upgrade --install (idempotent), template (dry-run), rollback |

@@ -5,8 +5,13 @@
 replicaCount: 1
 
 image:
-  init: amazon/aws-cli:latest   # init container — S3 list + HTML generate
-  nginx: nginx:alpine           # main container — HTML serve karta hai
+  # ECR Pull-Through Cache URLs — Docker Hub mirror via VPC endpoint
+  # No NAT Gateway needed — nodes pull from ECR (ecr.dkr VPC endpoint)
+  # amazon/aws-cli → docker-hub/amazon/aws-cli (namespaced image)
+  # nginx → docker-hub/library/nginx (official image = library/ prefix)
+  # Override on deploy: --set image.init=<account-id>.dkr.ecr.<region>.amazonaws.com/docker-hub/amazon/aws-cli:latest
+  init: "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/docker-hub/amazon/aws-cli:latest"
+  nginx: "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/docker-hub/library/nginx:alpine"
 
 aws:
   region: us-east-1
