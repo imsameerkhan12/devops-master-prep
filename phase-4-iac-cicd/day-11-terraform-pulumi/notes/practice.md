@@ -649,6 +649,696 @@ tofu destroy -var-file=dev.tfvars
 
 ---
 
+## 13. VPC Deep Dive — Private Subnets + 7 Endpoints
+
+### Hindi
+
+```
+VPC = Virtual Private Cloud = tera private datacenter AWS mein
+
+Soch aise:
+  AWS = ek badi building (millions of servers)
+  VPC = teri apni floor — sirf tere resources
+
+VPC ke andar:
+  Subnets     = rooms
+  Route Table = corridor signs (traffic kahan jaaye)
+  Security SG = room ke doors (kya andar, kya bahar)
+  IGW         = building ka main gate (public internet)
+```
+
+**Public vs Private Subnet:**
+```
+Public Subnet:
+  Route table: 0.0.0.0/0 → Internet Gateway
+  Koi bhi resource internet pe ja sakta hai
+  EKS nodes yahan nahi hone chahiye — exposed!
+
+Private Subnet:
+  Route table: sirf 10.0.0.0/16 → local
+  Internet nahi — nodes safe hain
+  Problem: images kaise pull karein bina internet ke?
+
+Normal solution = NAT Gateway:
+  Private subnet → NAT GW (public subnet) → Internet
+  Cost: $32/month + data transfer
+
+Hamaara solution = VPC Endpoints (cheaper + more secure):
+  Private subnet → VPC Endpoint → AWS Service directly
+  AWS ke andar hi rehta hai — internet nahi jaata
+  S3 Gateway endpoint = FREE
+```
+
+**7 VPC Endpoints — kyu zaroori:**
+```
+Private EKS node ko ye AWS services chahiye:
+
+1. s3 (Gateway, FREE)
+   → ECR image layers S3 mein stored hain
+   → Nodes yahan se images pull karte hain
+
+2. ec2 (Interface)
+   → nodeadm bootstrap — node EKS se connect karta hai
+   → VPC CNI — ENI banata hai nodes pe (pod networking)
+
+3. ecr.api (Interface)
+   → Image metadata — "kaunsa digest hai is image ka?"
+
+4. ecr.dkr (Interface)
+   → Actual image pull (docker pull equivalent)
+
+5. eks (Interface)
+   → K8s API server — kubectl commands yahan jaati hain
+
+6. sts (Interface)
+   → Token exchange — AWS credentials ke liye
+
+7. eks-auth (Interface)
+   → Pod Identity Agent → AWS STS se temp creds fetch karta hai
+```
+
+**for_each pattern — hamare code mein:**
+```hcl
+# iac/modules/vpc/main.tf
+locals {
+  interface_endpoints = {
+    ec2      = "ec2"
+    ecr_api  = "ecr.api"
+    ecr_dkr  = "ecr.dkr"
+    eks      = "eks"
+    sts      = "sts"
+    eks_auth = "eks-auth"
+  }
+}
+
+resource "aws_vpc_endpoint" "interface" {
+  for_each = local.interface_endpoints
+  # each.key   = ec2, ecr_api, ecr_dkr ...
+  # each.value = "ec2", "ecr.api", "ecr.dkr" ...
+  service_name = "com.amazonaws.us-east-1.${each.value}"
+}
+# 6 resources, ek block — DRY ✅
+```
+
+### English — Interview Answer
+
+> "We use VPC endpoints instead of NAT Gateway — cheaper and more secure since traffic stays within AWS network. For private EKS, 7 endpoints are mandatory: S3 gateway (free, ECR image layers), EC2 (node bootstrap + CNI ENI management), ECR API + ECR DKR (image pull), EKS (K8s API), STS (credential exchange), EKS-auth (Pod Identity Agent). We use `for_each` over a local map to create all 6 interface endpoints from a single resource block — no duplication."
+
+---
+
+## 14. EKS Deep Dive — Control Plane, Node Groups, Addons
+
+### Hindi
+
+```
+EKS = Elastic Kubernetes Service
+    = AWS-managed Kubernetes control plane
+
+Control Plane (AWS manage karta hai, tujhe nahi dikhta):
+  API Server     → kubectl commands yahan aati hain
+  etcd           → cluster ka database (desired state)
+  Scheduler      → pod ko node pe assign karta hai
+  Controller Mgr → desired state maintain karta hai
+
+Data Plane (tera — EC2 nodes):
+  kubelet          → har node pe — API server se orders leta hai
+  kube-proxy       → Service traffic routing
+  container runtime → containers chalata hai (containerd)
+```
+
+**Managed Node Group:**
+```
+Kya AWS karta hai automatically:
+  ✅ Node replace (crash hone pe)
+  ✅ Rolling update (K8s version upgrade pe)
+  ✅ Scaling (min/max ke beech, ASG se)
+  ✅ AMI updates
+
+Tu nahi karta:
+  ❌ SSH into nodes
+  ❌ Manual terminate + replace
+  ❌ kubelet config
+```
+
+**EKS Addons — har ek kya karta hai:**
+```
+vpc-cni:
+  Pod networking — pods ko real VPC IP milti hai
+  ENI (Elastic Network Interface) banata hai nodes pe
+  Har pod = real VPC IP (AWS-native approach)
+
+kube-proxy:
+  Service → Pod traffic forward karna
+  iptables/ipvs rules manage karta hai
+
+coredns:
+  DNS server cluster ke andar
+  "my-service.default.svc.cluster.local" → pod IP resolve
+
+aws-ebs-csi-driver:
+  PersistentVolume = EBS volume
+  Pod start → EBS attach, Pod stop → EBS detach
+  Pod dusre node pe gaya → EBS reattach
+
+eks-pod-identity-agent:
+  DaemonSet — har node pe chalta hai
+  Pod startup pe intercept karta hai
+  AWS STS se temp credentials fetch + inject karta hai
+
+metrics-server:
+  Resource usage collect karta hai
+  kubectl top nodes / kubectl top pods ke liye
+  HPA (Horizontal Pod Autoscaler) isko use karta hai
+```
+
+**EKS Access Entry — aws-auth replace:**
+```
+Purana tarika (avoid):
+  aws-auth ConfigMap — manually edit YAML
+  Galti hone pe cluster lock out
+  No audit trail — koi IaC nahi
+
+Naya tarika (EKS 1.23+):
+  aws_eks_access_entry           → IAM principal register karo
+  aws_eks_access_policy_association → policy attach karo
+
+Hamare code mein (iac/modules/eks/main.tf):
+  admin_iam_user_arn = arn:aws:iam::<account>:user/sameer
+  Policy = AmazonEKSClusterAdminPolicy
+  Scope = cluster (poora cluster admin)
+```
+
+### English — Interview Answer
+
+> "EKS manages the control plane — API server, etcd, scheduler. We manage the data plane via Managed Node Groups, which handle node replacement, rolling upgrades, and scaling automatically. Each addon serves a specific purpose: VPC CNI assigns real VPC IPs to pods using ENIs, EBS CSI handles persistent volumes, Pod Identity Agent injects AWS credentials. We use Access Entries instead of the legacy aws-auth ConfigMap — it's IaC-manageable, auditable via CloudTrail, and can't accidentally lock you out."
+
+---
+
+## 15. Pod Identity — IAM for Pods (No Hardcoding)
+
+### Hindi
+
+```
+Problem: Pod ko S3 read karna hai
+         AWS credentials kahan se aayein?
+
+❌ Bad — Hardcode karo:
+   env:
+     AWS_ACCESS_KEY_ID: AKIA...
+   Problem: key rotate → deployment update
+            leak → full account compromise
+
+❌ Old — IRSA (IAM Roles for Service Accounts):
+   OIDC Provider banao (cluster-specific URL)
+   Service Account annotate karo
+   Trust policy mein OIDC URL daalo
+   Pod JWT → AWS STS → temp creds
+   Problem: cluster recreate → OIDC URL change → trust policy update
+            cluster-specific = not portable
+
+✅ New — Pod Identity (2023 standard):
+   Trust policy: pods.eks.amazonaws.com (static, cluster-agnostic)
+   No OIDC URL, no SA annotation
+   Same IAM role = any EKS cluster use kar sakta hai
+```
+
+**Pod Identity flow — step by step:**
+```
+1. Pod start hota hai (s3-reader-sa ServiceAccount se)
+
+2. Pod Identity Agent (DaemonSet, har node pe) dekhta hai:
+   "Is pod ka SA EKS Association mein hai?"
+
+3. Association table:
+   cluster=devops-lab, ns=default, sa=s3-reader-sa → role=s3-reader-role
+
+4. Agent STS se baat karta hai (eks-auth VPC endpoint):
+   "Is pod ke liye temp credentials do"
+
+5. Pod ko credentials milti hain via projected volume:
+   /var/run/secrets/pods.eks.amazonaws.com/serviceaccount/token
+
+6. AWS SDK automatically pick up karta hai — no config needed
+
+Flow:
+  Pod → Pod Identity Agent → eks-auth endpoint → AWS STS → temp creds
+```
+
+**Hamare code mein — 3 pieces (iac/envs/dev/main.tf):**
+```hcl
+# 1. IAM Role — trust = pods.eks.amazonaws.com
+resource "aws_iam_role" "s3_reader" {
+  assume_role_policy = jsonencode({
+    Statement = [{
+      Principal = { Service = "pods.eks.amazonaws.com" }
+      Action    = ["sts:AssumeRole", "sts:TagSession"]
+    }]
+  })
+}
+
+# 2. Policy attach
+resource "aws_iam_role_policy_attachment" "s3_reader" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
+}
+
+# 3. Association — IAM Role ↔ K8s ServiceAccount link
+resource "aws_eks_pod_identity_association" "s3_reader" {
+  cluster_name    = module.eks.cluster_name
+  namespace       = "default"
+  service_account = "s3-reader-sa"   # app/s3-lister/serviceaccount.yaml
+  role_arn        = aws_iam_role.s3_reader.arn
+}
+```
+
+**IRSA vs Pod Identity — interview table:**
+```
+                    IRSA                  Pod Identity
+Trust policy        OIDC URL (cluster)    pods.eks.amazonaws.com
+Cluster-specific    Yes                   No (portable)
+SA annotation       Required              Not required
+Cross-account       Complex               Simpler
+Agent needed        No (JWT flow)         Yes (eks-pod-identity-agent addon)
+2023+ standard      No                    YES ✅
+```
+
+### English — Interview Answer
+
+> "Pod Identity is the 2023 replacement for IRSA. Instead of OIDC federation with cluster-specific URLs in trust policies, Pod Identity uses a static service principal `pods.eks.amazonaws.com` — the same IAM role works on any EKS cluster. The Pod Identity Agent DaemonSet intercepts pod startup, checks the EKS Association table (namespace + ServiceAccount → IAM Role), calls AWS STS via the eks-auth VPC endpoint, and injects temporary credentials via projected volume. The AWS SDK picks these up automatically — no hardcoded credentials, no ServiceAccount annotations."
+
+---
+
+## 16. Traefik + Gateway API — Modern Ingress
+
+### Hindi
+
+```
+Problem: Pod ke bahar traffic kaise laao?
+
+Old way — Ingress:
+  kind: Ingress
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+  
+  Problem:
+    Har controller ka alag annotation set
+    NGINX annotations = AWS pe nahi chalega
+    ALB annotations = Azure pe nahi chalega
+    Cloud-specific garbage — not portable
+
+New way — Gateway API (Kubernetes SIG project, 2023+ standard):
+  3 resources, clearly separated roles
+  Portable across all implementations
+  Formal versioning
+```
+
+**Gateway API — 3 resources, 3 roles:**
+```
+GatewayClass (cluster-wide, cluster admin banata hai):
+  "Traefik implementation available hai"
+  kind: GatewayClass
+  spec:
+    controllerName: traefik.io/gateway-controller
+
+Gateway (namespace: traefik, network team banati hai):
+  "Port 80 pe sun, sabhi namespaces se routes allow"
+  kind: Gateway
+  spec:
+    gatewayClassName: traefik
+    listeners:
+      - port: 80
+        allowedRoutes:
+          namespaces:
+            from: All
+
+HTTPRoute (namespace: default, app developer banata hai):
+  "/ → s3-lister service pe bhejo"
+  kind: HTTPRoute
+  spec:
+    parentRefs:
+      - name: traefik-gateway
+        namespace: traefik
+    rules:
+      - matches:
+          - path: { type: PathPrefix, value: / }
+        backendRefs:
+          - name: s3-lister
+            port: 80
+```
+
+**Separation of concerns:**
+```
+Cluster admin  → GatewayClass (kaunsa implementation)
+Network team   → Gateway (ports, listeners, security)
+App developer  → HTTPRoute (routing rules only)
+
+Ingress mein = sab mix — cluster admin config + app routing ek jagah
+Gateway API  = clear boundaries ✅
+```
+
+**Traffic flow — hamare project mein:**
+```
+Internet
+  → NLB (AWS Network Load Balancer)
+     → Traefik pod (namespace: traefik)
+        → Gateway (port 80 listener)
+           → HTTPRoute match: prefix /
+              → s3-lister Service (ClusterIP)
+                 → s3-lister Pod (nginx container)
+```
+
+**Traefik kyu — NGINX nahi:**
+```
+NGINX Ingress:
+  2015 se hai — Ingress API based
+  Gateway API = afterthought, incomplete
+  Annotation-heavy config
+
+Traefik:
+  Gateway API = first-class citizen
+  Helm install = 5 minutes
+  Dashboard built-in (debugging easy)
+  Automatic HTTPS support
+  Hamare case mein: NLB + Gateway API = perfect fit
+```
+
+### English — Interview Answer
+
+> "Gateway API is the official Kubernetes SIG replacement for Ingress — standardized, portable, with proper role separation. GatewayClass is managed by cluster admins (which implementation — Traefik, Istio, Envoy), Gateway by network teams (ports, security, listeners), and HTTPRoute by app developers (routing rules). Unlike Ingress with its cloud-specific annotations, HTTPRoute is completely portable. Traffic flows: NLB → Traefik pod → Gateway listener → HTTPRoute match → ClusterIP Service → Pod. We use Traefik for its first-class Gateway API support and simple Helm install."
+
+---
+
+## 17. NGINX Ingress vs Traefik
+
+### Hindi
+
+```
+Dono kya karte hain:
+  Bahar se traffic → cluster ke andar route karo
+  External load balancer ka kaam
+
+NGINX Ingress Controller:
+  2015 se — sabse purana, sabse popular
+  NGINX (web server) ko reverse proxy ki tarah use karta hai
+  Config change hone pe → nginx.conf regenerate → NGINX reload
+  → Brief downtime possible har config update pe
+
+Traefik:
+  2016 se — cloud-native soch ke banaya (Go mein)
+  Kubernetes API watch karta hai — auto-discovery
+  Config change → hot reload — zero downtime ✅
+```
+
+**Head to head:**
+```
+Feature              NGINX Ingress        Traefik
+─────────────────────────────────────────────────
+Config reload        Full NGINX reload    Hot reload (zero downtime) ✅
+Gateway API support  Partial (retrofit)   First-class ✅
+Dashboard            No                   Yes (built-in) ✅
+Let's Encrypt        Manual setup         Automatic ✅
+Annotations needed   Many (complex)       Fewer
+Performance          Very high            High (comparable)
+Community            Huge                 Large
+```
+
+**Annotations problem:**
+```yaml
+# NGINX Ingress — annotation hell (cloud-specific, not portable)
+annotations:
+  kubernetes.io/ingress.class: "nginx"
+  nginx.ingress.kubernetes.io/rewrite-target: /$1
+  nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+  nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+
+# Traefik — Gateway API (clean, portable, no annotations)
+kind: HTTPRoute
+spec:
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: my-service
+          port: 80
+```
+
+**Kab kya choose karein:**
+```
+NGINX choose karo:
+  → Legacy project already NGINX pe
+  → Maximum community resources chahiye
+  → Fine-grained NGINX tuning chahiye
+
+Traefik choose karo (new projects):
+  → Gateway API adopt karna hai ✅
+  → Dashboard + observability chahiye ✅
+  → Automatic HTTPS chahiye ✅
+  → Hot reload = zero downtime chahiye ✅
+```
+
+### English — Interview Answer
+
+> "Both route external traffic into the cluster but differ in philosophy. NGINX Ingress wraps the NGINX web server — config changes trigger a full NGINX reload causing brief disruptions. Traefik is cloud-native — it watches the Kubernetes API and hot-reloads with zero downtime. The key differentiator today is Gateway API: Traefik treats it first-class while NGINX retrofitted support. For new projects, Traefik wins — cleaner config, built-in dashboard, automatic Let's Encrypt, no annotation sprawl."
+
+---
+
+## 18. Traefik Dashboard — Access kaise karein
+
+### Hindi
+
+```
+Traefik dashboard kya dikhata hai:
+  Routers    → kaunse routes active hain (HTTPRoute)
+  Services   → backend services (health, load balancing)
+  Middlewares → transformations (auth, rate limit, headers)
+  Providers  → kahan se config aa rahi hai (Kubernetes, Docker)
+
+Dashboard port: 8080 (internal, expose nahi hota by default)
+API port: 8080/api/
+```
+
+**3 ways to access:**
+
+**Method 1 — Port Forward (dev/debug, easiest):**
+```bash
+# Traefik pod ka naam dhundho
+kubectl get pods -n traefik
+
+# Port forward karo laptop pe
+kubectl port-forward -n traefik pod/traefik-<hash> 8080:8080
+
+# Browser mein:
+# http://localhost:8080/dashboard/
+# (trailing slash zaroori hai)
+```
+
+**Method 2 — HTTPRoute se expose (staging mein, auth ke saath):**
+```yaml
+# NEVER expose dashboard without auth — security risk
+# BasicAuth middleware pehle:
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: dashboard-auth
+  namespace: traefik
+spec:
+  basicAuth:
+    secret: traefik-dashboard-auth   # kubectl create secret generic
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: traefik-dashboard
+  namespace: traefik
+spec:
+  parentRefs:
+    - name: traefik-gateway
+      namespace: traefik
+  hostnames:
+    - "traefik.yourdomain.com"      # domain chahiye
+  rules:
+    - backendRefs:
+        - name: traefik
+          port: 8080
+```
+
+**Method 3 — Helm values se enable (hamare values.yaml mein):**
+```yaml
+# app/traefik/values.yaml mein add karo:
+ingressRoute:
+  dashboard:
+    enabled: true       # Traefik ka built-in IngressRoute banata hai
+    # BUT: production mein auth add karo!
+```
+
+**Port forward command — hamare project mein:**
+```bash
+# Cluster up hone ke baad:
+kubectl port-forward -n traefik \
+  $(kubectl get pods -n traefik -o name | head -1) \
+  8080:8080
+
+# Then open: http://localhost:8080/dashboard/
+```
+
+**Dashboard mein kya dekhoge:**
+```
+Routers section:
+  s3-lister@kubernetescrd → backend: s3-lister:80 → Status: Enabled ✅
+
+Services section:
+  s3-lister-default-80 → 1 server → 10.0.x.x:80 (pod IP)
+
+Providers:
+  kubernetes (watching K8s API)
+  kubernetescrd (watching Gateway API CRDs)
+```
+
+### English — Interview Answer
+
+> "Traefik's dashboard runs on port 8080 and shows active routers, backend services, and middlewares in real-time. For development, `kubectl port-forward` is the quickest access — forward pod port 8080 to localhost, then hit `http://localhost:8080/dashboard/`. For staging environments, expose it via HTTPRoute with BasicAuth middleware — never expose the dashboard without authentication since it reveals full routing config. In production, we typically disable it or restrict to VPN-only access."
+
+---
+
+## 19. Helm Chart — Raw Manifests se Conversion
+
+### Hindi
+
+```
+Raw manifests kya problem dete hain:
+  deployment.yaml mein hardcoded values:
+    replicas: 1        ← dev mein theek, prod mein 3 chahiye
+    region: us-east-1  ← eu-west-1 chahiye European cluster ke liye
+    image: nginx:alpine ← staging pe naya image test karna hai
+
+  Dev ke liye alag file, prod ke liye alag file
+  → Copy-paste → drift → bugs
+
+Helm kya karta hai:
+  Templates + Values = Final YAML
+  Ek template, alag values file dev/prod ke liye
+```
+
+**Helm Chart Structure:**
+```
+chart/
+├── Chart.yaml          ← chart ka naam, version, description
+├── values.yaml         ← default values (override ho sakti hain)
+└── templates/
+    ├── _helpers.tpl    ← reusable snippets (labels etc.)
+    ├── serviceaccount.yaml
+    ├── deployment.yaml
+    ├── service.yaml
+    └── httproute.yaml
+```
+
+**Chart.yaml — 2 versions:**
+```yaml
+apiVersion: v2
+name: s3-lister
+version: 0.1.0        # CHART version — chart code change pe badhao
+appVersion: "1.0.0"   # APP version — actual app ka version
+```
+
+**Template syntax — key concepts:**
+```yaml
+# .Values.xxx → values.yaml se value lo
+replicas: {{ .Values.replicaCount }}
+
+# .Release.Name → helm install ke waqt diya hua naam
+name: {{ .Release.Name }}
+
+# .Release.Namespace → -n flag se
+namespace: {{ .Release.Namespace }}
+
+# .Chart.Name, .Chart.Version → Chart.yaml se
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+
+# | quote → string mein wrap karo ("us-east-1")
+value: {{ .Values.aws.region | quote }}
+
+# toYaml + nindent → nested YAML block paste karo (indented)
+resources:
+  {{- toYaml .Values.resources | nindent 12 }}
+
+# include → _helpers.tpl se snippet insert karo
+labels:
+  {{- include "s3-lister.labels" . | nindent 4 }}
+
+# if/end — conditional block
+{{- if .Values.gateway.create }}
+  # sirf tabhi render hoga jab gateway.create: true ho
+{{- end }}
+```
+
+**_helpers.tpl — kyu zaroori hai:**
+```
+Labels har resource pe same chahiye (Deployment, Service, SA)
+Ek jagah define karo → sab jagah include karo
+Change ek jagah → sab jagah update
+
+{{- define "s3-lister.labels" -}}
+app.kubernetes.io/name: {{ .Chart.Name }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+# Use karo:
+labels:
+  {{- include "s3-lister.labels" . | nindent 4 }}
+```
+
+**Helm commands:**
+```bash
+# Install (pehli baar)
+helm install s3-lister ./app/s3-lister/chart -n default
+
+# Upgrade (update karo)
+helm upgrade s3-lister ./app/s3-lister/chart -n default
+
+# Install ya upgrade — idempotent (CI/CD ke liye)
+helm upgrade --install s3-lister ./app/s3-lister/chart -n default
+
+# Values override karo
+helm upgrade --install s3-lister ./app/s3-lister/chart \
+  --set replicaCount=3 \
+  --set aws.region=eu-west-1
+
+# Alag values file (prod ke liye)
+helm upgrade --install s3-lister ./app/s3-lister/chart \
+  -f values-prod.yaml
+
+# Template render dekho (kuch deploy nahi hota — dry run)
+helm template s3-lister ./app/s3-lister/chart
+
+# Release list
+helm list -n default
+
+# Rollback
+helm rollback s3-lister 1   # revision 1 pe wapas
+
+# Uninstall
+helm uninstall s3-lister -n default
+```
+
+**gateway.create flag — kyu:**
+```yaml
+# values.yaml
+gateway:
+  create: true    # pehli install pe Gateway banta hai
+
+# Agar Gateway already exist karta hai (traefik Helm chart se):
+helm upgrade --install s3-lister ./app/s3-lister/chart \
+  --set gateway.create=false
+# Gateway skip, sirf HTTPRoute banao
+```
+
+### English — Interview Answer
+
+> "We converted raw manifests to a Helm chart to enable environment-specific deployments without code duplication. The chart has `values.yaml` with defaults — dev uses them as-is, prod overrides `replicaCount`, region, and image tag via a separate `values-prod.yaml`. Template functions like `toYaml | nindent` handle nested blocks cleanly, and `_helpers.tpl` centralizes label definitions so all resources stay consistent. In CI/CD, we use `helm upgrade --install` — idempotent, works for both first deploy and updates."
+
+---
+
 ## Concept Summary
 
 | Concept | Key Point |
@@ -665,3 +1355,13 @@ tofu destroy -var-file=dev.tfvars
 | Module | Reusable block — ek baar likho, multiple envs mein use karo |
 | Community Module | terraform-aws-modules — battle-tested, production standard |
 | Drift | Console se manual change — tofu plan detect karta hai |
+| VPC Endpoints | NAT GW replace karo — 7 endpoints, S3 free, baaki Interface |
+| EKS Addons | vpc-cni, coredns, kube-proxy, ebs-csi, pod-identity-agent, metrics-server |
+| Pod Identity | pods.eks.amazonaws.com trust — no OIDC, no SA annotation, portable |
+| Gateway API | GatewayClass + Gateway + HTTPRoute — 3 roles, Ingress replacement |
+| Traefik | Gateway API first-class, hot reload, dashboard built-in, auto HTTPS |
+| NGINX vs Traefik | NGINX = reload on change; Traefik = hot reload + Gateway API native |
+| Traefik Dashboard | port 8080 — port-forward (dev), HTTPRoute+auth (staging), disable (prod) |
+| Helm Chart | Chart.yaml + values.yaml + templates/ — template karo, hardcode mat karo |
+| Helm Template Syntax | .Values.x, .Release.Name, toYaml\|nindent, include, if/end |
+| Helm Commands | install, upgrade --install (idempotent), template (dry-run), rollback |

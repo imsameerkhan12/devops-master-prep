@@ -1,0 +1,41 @@
+{{- if .Values.gateway.create }}
+---
+# Gateway — Traefik ka entry point
+# gateway.create: false karo agar already exist karta hai
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.gateway.name }}
+  namespace: {{ .Values.gateway.namespace }}
+spec:
+  gatewayClassName: traefik
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: All
+{{- end }}
+
+---
+# HTTPRoute — app ka traffic rule
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "s3-lister.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name }}
+      namespace: {{ .Values.gateway.namespace }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: {{ .Values.route.path }}
+      backendRefs:
+        - name: {{ .Release.Name }}
+          port: {{ .Values.service.port }}

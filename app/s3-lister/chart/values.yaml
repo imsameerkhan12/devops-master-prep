@@ -1,0 +1,34 @@
+# values.yaml — default values
+# Override karo: helm install -f values-prod.yaml
+# Ya: helm install --set aws.region=eu-west-1
+
+replicaCount: 1
+
+image:
+  init: amazon/aws-cli:latest   # init container — S3 list + HTML generate
+  nginx: nginx:alpine           # main container — HTML serve karta hai
+
+aws:
+  region: us-east-1
+
+serviceAccount:
+  name: s3-reader-sa   # Pod Identity Association isse match karta hai (iac/envs/dev/main.tf)
+
+service:
+  port: 80
+
+resources:
+  requests:
+    cpu: "50m"
+    memory: "64Mi"
+  limits:
+    cpu: "100m"
+    memory: "128Mi"
+
+gateway:
+  create: true           # false karo agar Gateway already exist karta hai
+  name: traefik-gateway
+  namespace: traefik
+
+route:
+  path: /

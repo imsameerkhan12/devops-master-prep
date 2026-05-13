@@ -1,25 +1,25 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: s3-lister
-  namespace: default
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "s3-lister.labels" . | nindent 4 }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      app: s3-lister
+      {{- include "s3-lister.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        app: s3-lister
+        {{- include "s3-lister.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: s3-reader-sa   # Pod Identity isko dekh ke AWS creds inject karega
+      serviceAccountName: {{ .Values.serviceAccount.name }}
 
-      # Init container — AWS CLI se S3 list karo, HTML banao
-      # Pod Identity Agent automatically creds provide karega
       initContainers:
         - name: s3-fetch
-          image: amazon/aws-cli:latest
+          image: {{ .Values.image.init }}
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -33,34 +33,27 @@ spec:
               <ul>" > /html/index.html
               aws s3 ls --region $AWS_REGION | awk '{print "<li>"$3"</li>"}' >> /html/index.html
               echo "</ul>
-              <hr><small>Pod: $HOSTNAME | ServiceAccount: s3-reader-sa</small>
+              <hr><small>Pod: $HOSTNAME | SA: {{ .Values.serviceAccount.name }}</small>
               </body></html>" >> /html/index.html
-              echo "HTML generated successfully"
           env:
             - name: AWS_REGION
-              value: "us-east-1"
+              value: {{ .Values.aws.region | quote }}
             - name: AWS_DEFAULT_REGION
-              value: "us-east-1"
+              value: {{ .Values.aws.region | quote }}
           volumeMounts:
             - name: html
               mountPath: /html
 
-      # Main container — nginx HTML serve karo
       containers:
         - name: nginx
-          image: nginx:alpine
+          image: {{ .Values.image.nginx }}
           ports:
             - containerPort: 80
           volumeMounts:
             - name: html
               mountPath: /usr/share/nginx/html
           resources:
-            requests:
-              cpu: "50m"
-              memory: "64Mi"
-            limits:
-              cpu: "100m"
-              memory: "128Mi"
+            {{- toYaml .Values.resources | nindent 12 }}
 
       volumes:
         - name: html
