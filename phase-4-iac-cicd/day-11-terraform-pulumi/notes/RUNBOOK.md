@@ -56,14 +56,12 @@ helm repo update
 
 ```powershell
 cd iac/envs/dev
-$env:AWS_PROFILE = "sameer"
 tofu init
 ```
 
 ### Step 2 — Plan (Review)
 
 ```powershell
-# PowerShell mein --% stop-parsing token use karo
 tofu --% plan -var-file=dev.tfvars
 ```
 
@@ -197,19 +195,28 @@ helm uninstall traefik -n traefik
 
 ```powershell
 cd iac/envs/dev
-$env:AWS_PROFILE = "sameer"
 tofu --% destroy -var-file=dev.tfvars
 # "yes" type karo
 # ~10-15 min
 ```
 
+> **Gotcha — NLB dangling:** Agar Step 1 skip kiya aur cluster destroy ho gaya,
+> kubectl unreachable ho jaata hai — helm uninstall nahi chalega.
+> Tab manually NLB dhundho aur delete karo:
+> ```powershell
+> aws elbv2 describe-load-balancers --profile sameer --region us-east-1 `
+>   --query 'LoadBalancers[?contains(LoadBalancerName, `k8s`)].LoadBalancerArn'
+> aws elbv2 delete-load-balancer --load-balancer-arn <arn> --profile sameer --region us-east-1
+> # Phir tofu destroy chalao — VPC tab delete hogi
+> ```
+
 ### Step 3 — Verify (Optional)
 
 ```powershell
-aws eks list-clusters --profile sameer --region us-east-1
+aws eks list-clusters --region us-east-1
 # Output: {"clusters": []}  ← clean
 
-aws ec2 describe-vpcs --profile sameer --region us-east-1 `
+aws ec2 describe-vpcs --region us-east-1 `
   --filters "Name=tag:project,Values=devops-lab" `
   --query 'Vpcs[].VpcId'
 # Output: []  ← clean
