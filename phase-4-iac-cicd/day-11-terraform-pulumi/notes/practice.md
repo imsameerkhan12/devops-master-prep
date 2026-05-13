@@ -1598,8 +1598,17 @@ helm uninstall s3-lister -n default
 helm uninstall traefik -n traefik
 
 cd iac/envs/dev
-tofu destroy -var-file=dev.tfvars   # ~10-15 min
+tofu --% destroy -var-file=dev.tfvars   # ~10-15 min
+
+# Last step — state bucket + Docker Hub secret cleanup (fully done ke baad)
+bash iac/bootstrap/teardown-state-backend.sh
 ```
+
+> **Destroy order is strict:**
+> 1. helm uninstall (NLB delete karo — cloud controller abhi alive hai)
+> 2. tofu destroy (infra delete — VPC clear hogi kyunki NLB gone)
+> 3. teardown-state-backend.sh (state bucket delete — tofu ab kaam nahi karega)
+> State bucket pehle delete kiya → tofu state kho jaati hai → orphaned resources
 
 ---
 
@@ -1638,3 +1647,7 @@ tofu destroy -var-file=dev.tfvars   # ~10-15 min
 | Helm Chart | Chart.yaml + values.yaml + templates/ — template karo, hardcode mat karo |
 | Helm Template Syntax | .Values.x, .Release.Name, toYaml\|nindent, include, if/end |
 | Helm Commands | install, upgrade --install (idempotent), template (dry-run), rollback |
+| Destroy Order | helm uninstall → tofu destroy → teardown-state-backend.sh (strict order) |
+| State Bucket | Outside IaC — bootstrap script banata hai, teardown script delete karta hai |
+| VPC Endpoint Delete Time | Interface endpoints = 1-2 min each — normal, not stuck |
+| IGW Delete Delay | Internet Gateway = subnets clear hone ka wait karta hai |

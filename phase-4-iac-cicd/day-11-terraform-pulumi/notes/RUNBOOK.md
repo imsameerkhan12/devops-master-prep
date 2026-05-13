@@ -222,18 +222,34 @@ aws ec2 describe-vpcs --region us-east-1 `
 # Output: []  ← clean
 ```
 
+### Step 4 — Bootstrap Cleanup (fully done ke baad)
+
+Only run when you're done with the environment entirely — deletes state file and Docker Hub secret.
+
+```bash
+bash iac/bootstrap/teardown-state-backend.sh
+# Prompts "yes" before deleting
+# Deletes: S3 state bucket (all versions) + ecr-pullthroughcache/docker-hub secret
+```
+
+> **Why last:** State bucket must exist until tofu destroy completes — it tracks
+> what was deleted. Delete the bucket before destroy = tofu loses state = orphaned
+> resources in AWS with no way to track them via IaC.
+
 ---
 
 ## Quick Reference
 
 | Command | When |
 |---|---|
+| `bash iac/bootstrap/setup-state-backend.sh` | Once — before first tofu init |
 | `tofu init` | First time ya provider change ke baad |
-| `tofu plan -var-file=dev.tfvars` | Har apply se pehle |
-| `tofu apply -var-file=dev.tfvars` | Create/update infra |
+| `tofu plan --% -var-file=dev.tfvars` | Har apply se pehle |
+| `tofu apply --% -var-file=dev.tfvars` | Create/update infra |
 | `aws eks update-kubeconfig ...` | Apply ke baad, har naye cluster pe |
-| `kubectl apply -f gateway-api-crds.yaml` | Pehle ek baar (ya CRD version change pe) |
+| `kubectl apply -f gateway-api-crds.yaml` | Once (ya CRD version change pe) |
 | `helm upgrade --install traefik ...` | Apply ke baad |
 | `helm upgrade --install s3-lister ...` | Traefik ke baad |
-| `helm uninstall` | Destroy se pehle |
-| `tofu destroy -var-file=dev.tfvars` | Cleanup |
+| `helm uninstall traefik && helm uninstall s3-lister` | Destroy se pehle (NLB clean karo) |
+| `tofu destroy --% -var-file=dev.tfvars` | Infra cleanup (~15 min) |
+| `bash iac/bootstrap/teardown-state-backend.sh` | Last step — state bucket + secret delete |
