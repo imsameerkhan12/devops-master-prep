@@ -19,7 +19,7 @@ terraform {
     key          = "dev/terraform.tfstate"               # S3 path inside bucket
     region       = "us-east-1"
     encrypt      = true
-    use_lockfile = true
+    # use_lockfile = true  # OpenTofu 1.10+ needed — using 1.9.1
   }
 }
 

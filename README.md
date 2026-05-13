@@ -98,7 +98,7 @@ Each day folder has:
 | Day 9 | K8s Networking + Storage | [README](phase-3-kubernetes/day-09-k8s-networking-storage-security/notes/README.md) | — | ⏳ |
 | Day 10 | Helm + Troubleshooting | [README](phase-3-kubernetes/day-10-helm-troubleshooting-patterns/notes/README.md) | — | ⏳ |
 | Day 11 | OpenTofu + Pulumi | [README](phase-4-iac-cicd/day-11-terraform-pulumi/notes/README.md) | [practice.md](phase-4-iac-cicd/day-11-terraform-pulumi/notes/practice.md) | 🔄 |
-| Day 12 | GitHub Actions + Azure DevOps | [README](phase-4-iac-cicd/day-12-github-actions-azure-devops/notes/README.md) | — | ⏳ |
+| Day 12 | GitHub Actions + Azure DevOps | [README](phase-4-iac-cicd/day-12-github-actions-azure-devops/notes/README.md) | [practice.md](phase-4-iac-cicd/day-12-github-actions-azure-devops/notes/practice.md) | ⏳ |
 | Day 13 | Prometheus + Grafana + OTel | [README](phase-5-observability/day-13-prometheus-grafana-otel-logging/notes/README.md) | — | ⏳ |
 | Day 14 | System Design Mock | [README](phase-6-mock-polish/day-14-system-design-mock/notes/README.md) | — | ⏳ |
 | Day 15 | Final Mock + Stories | [README](phase-6-mock-polish/day-15-final-mock-stories/notes/README.md) | — | ⏳ |

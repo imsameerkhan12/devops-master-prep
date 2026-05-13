@@ -36,7 +36,7 @@ module "vpc" {
 # Allows HTTPS (443) from within the VPC — endpoints speak HTTPS
 resource "aws_security_group" "endpoints" {
   name_prefix = "${var.name}-endpoints-"
-  description = "VPC endpoints — allow HTTPS from VPC CIDR"
+  description = "VPC endpoints - allow HTTPS from VPC CIDR"
   vpc_id      = module.vpc.vpc_id
 
   ingress {

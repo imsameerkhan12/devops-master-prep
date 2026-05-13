@@ -170,7 +170,7 @@ Purana — AVOID:
     dynamodb_table = "terraform-lock"  ← extra resource, extra cost
   }
 
-Naya — 2024+ standard (OpenTofu 1.8+):
+Naya — 2024+ standard (OpenTofu 1.10+):
   backend "s3" {
     use_lockfile = true  ← bas itna, DynamoDB nahi chahiye
   }
@@ -1339,6 +1339,263 @@ helm upgrade --install s3-lister ./app/s3-lister/chart \
 
 ---
 
+## 20. Hands-On Walkthrough — Full Deploy + Destroy
+
+### Step 1 — OpenTofu Install (Windows)
+
+```powershell
+# Admin PowerShell mein run karo (choco admin chahiye)
+$version = "1.9.1"
+$url = "https://github.com/opentofu/opentofu/releases/download/v$version/tofu_${version}_windows_amd64.zip"
+$installDir = "C:\Program Files\OpenTofu"
+
+New-Item -ItemType Directory -Force -Path $installDir
+Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\opentofu.zip"
+Expand-Archive -Path "$env:TEMP\opentofu.zip" -DestinationPath $installDir -Force
+
+# System PATH mein add karo — permanent, saari shells mein milega
+[Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";$installDir", "Machine")
+
+# Verify
+tofu --version   # OpenTofu v1.9.1
+```
+
+> **Actual output:** `OpenTofu v1.9.1 on windows_amd64`
+
+**Gotcha — use_lockfile version:**
+```
+# versions.tf mein use_lockfile = true likha tha
+# Error: "An argument named use_lockfile is not expected here"
+# Reason: use_lockfile needs OpenTofu 1.10+ — we are on 1.9.1
+# Fix: comment out karo for dev (no locking OK for solo work)
+
+# use_lockfile = true  # OpenTofu 1.10+ needed
+```
+
+**Gotcha — PowerShell flag parsing:**
+```powershell
+# tofu plan -var-file=dev.tfvars → Error: "Too many command line arguments"
+# Reason: PowerShell -var-file ko apna parameter samajhta hai
+
+# Fix: stop-parsing token --% use karo
+tofu --% -var-file=dev.tfvars
+# --% ke baad PowerShell kuch parse nahi karta — raw pass karta hai tofu ko
+```
+
+### Step 2 — State Backend (ek baar run karo)
+
+```bash
+bash iac/bootstrap/setup-state-backend.sh
+```
+
+> **Actual output:**
+> ```
+> === OpenTofu State Backend Setup ===
+> Bucket: s3://devops-lab-tofu-state-271169999916
+> { "Location": "/devops-lab-tofu-state-271169999916" }
+> === Done ===
+> ```
+
+```
+Script kya karta hai:
+  aws s3api create-bucket        → bucket banao
+  put-bucket-versioning          → state rollback possible
+  put-bucket-encryption (AES256) → state file mein secrets hain
+  put-public-access-block        → kabhi public nahi hona chahiye
+```
+
+### Step 3 — tofu init
+
+```powershell
+# AWS_PROFILE set karo — backend init pe chahiye
+# (provider config pehle nahi padhta, backend pehle connect hota hai)
+$env:AWS_PROFILE = "sameer"
+cd iac/envs/dev
+tofu init
+```
+
+> **Actual output:**
+> ```
+> Successfully configured the backend "s3"!
+> Installing hashicorp/aws v5.100.0...
+> Installing hashicorp/tls v4.3.0...
+> Installing hashicorp/time v0.14.0...
+> OpenTofu has been successfully initialized!
+> ```
+
+```
+Kya download hua:
+  .terraform/providers/ → AWS, TLS, Time, CloudInit, Null provider binaries
+  .terraform/modules/   → terraform-aws-modules/vpc v5.21.0
+                          terraform-aws-modules/eks v20.37.2
+  .terraform.lock.hcl   → exact versions locked (git mein commit karo)
+```
+
+**Gotcha — AWS_PROFILE backend ke liye:**
+```
+tofu init karte waqt backend S3 connect karta hai
+Backend config mein profile nahi hota (provider config mein hota hai)
+Provider config baad mein padhta hai
+So: AWS_PROFILE env var set karna padta hai init se pehle
+
+Fix: $env:AWS_PROFILE = "sameer" (ya har command se pehle set karo)
+```
+
+### Step 4 — tofu plan (review before apply)
+
+```powershell
+$env:AWS_PROFILE = "sameer"
+tofu --% plan -var-file=dev.tfvars
+```
+
+> **Actual output (summary):**
+> ```
+> Plan: 83 to add, 0 to change, 0 to destroy
+>
+> Changes to Outputs:
+>   + cluster_endpoint       = (known after apply)
+>   + cluster_name           = "devops-lab-eks"
+>   + kubectl_config_command = "aws eks update-kubeconfig ..."
+>   + s3_bucket_name         = (known after apply)
+>   + s3_reader_role_arn     = (known after apply)
+>   + vpc_id                 = (known after apply)
+> ```
+
+```
+83 resources mein kya kya hai:
+  VPC + 2 private subnets + 2 public subnets + route tables
+  1 S3 Gateway endpoint + 6 Interface endpoints
+  Security Group for endpoints
+  EKS cluster + managed node group
+  6 addons (vpc-cni, kube-proxy, coredns, ebs-csi, pod-identity-agent, metrics-server)
+  IAM roles: s3-reader + ebs-csi
+  Pod Identity Associations: s3-reader-sa + ebs-csi-controller-sa
+  EKS Access Entry + Policy Association (sameer = cluster admin)
+  S3 bucket + 2 test objects (hello.txt, pod-identity-test.txt)
+
+Plan padhna:
+  + = naya banega
+  ~ = modify hoga
+  - = delete hoga
+  (known after apply) = apply ke baad pata chalega (ARN, ID etc.)
+```
+
+### Step 5 — tofu apply (~20 min)
+
+```powershell
+$env:AWS_PROFILE = "sameer"
+tofu --% apply -var-file=dev.tfvars -auto-approve
+
+# Order jisme banta hai (dependency graph se):
+#   VPC → subnets → route tables → VPC endpoints
+#   EKS control plane → node group → addons
+#   IAM roles → Pod Identity Associations
+#   S3 bucket → test objects
+```
+
+**Gotcha — Orphaned resources from previous runs:**
+```
+Error: ResourceAlreadyExistsException:
+  The specified log group already exists
+  Log group: /aws/eks/devops-lab-eks/cluster
+
+Reason: Day 5 mein eksctl se cluster banaya tha
+        destroy.sh ne CloudWatch log group delete nahi kiya
+        OpenTofu banane ki koshish karta hai → already exists → fail
+
+Fix: Manually delete karo, phir apply
+  aws logs delete-log-group \
+    --log-group-name "/aws/eks/devops-lab-eks/cluster" \
+    --profile sameer --region us-east-1
+
+Lesson: Pehle existing resources check karo:
+  aws eks list-clusters --profile sameer --region us-east-1
+  aws logs describe-log-groups --profile sameer (filter /aws/eks/)
+
+Bonus Gotcha — Git Bash path mangling:
+  aws logs delete-log-group --log-group-name /aws/eks/...
+  Git Bash converts /aws → C:/Program Files/Git/aws → FAIL
+  Fix: PowerShell use karo, ya MSYS_NO_PATHCONV=1 set karo
+```
+
+**Gotcha — AWS Security Group description ASCII only:**
+```
+Error: creating Security Group: InvalidParameterValue:
+  Value (VPC endpoints — allow HTTPS from VPC CIDR) for parameter
+  GroupDescription is invalid. Character sets beyond ASCII not supported.
+
+Reason: Em dash — (U+2014) is non-ASCII
+Fix: Replace — with regular hyphen -
+  "VPC endpoints - allow HTTPS from VPC CIDR"
+
+Rule: AWS resource names/descriptions = ASCII only
+      Comments mein use karo, AWS strings mein nahi
+```
+
+### Step 6 — kubectl configure
+
+```bash
+aws eks update-kubeconfig \
+  --region us-east-1 \
+  --name devops-lab-eks \
+  --profile sameer
+
+kubectl get nodes   # nodes Ready hone chahiye
+kubectl get pods -n kube-system   # addons running hone chahiye
+```
+
+### Step 7 — Traefik install (Helm)
+
+```bash
+helm repo add traefik https://traefik.github.io/charts
+helm repo update
+
+helm upgrade --install traefik traefik/traefik \
+  -n traefik --create-namespace \
+  -f app/traefik/values.yaml
+
+# NLB DNS dhundho
+kubectl get svc -n traefik
+# EXTERNAL-IP = xyz.elb.amazonaws.com → ye browser mein khulega
+```
+
+### Step 8 — s3-lister app deploy (Helm)
+
+```bash
+helm upgrade --install s3-lister ./app/s3-lister/chart \
+  -n default
+
+kubectl get pods   # s3-lister pod Running hona chahiye
+kubectl logs <pod> -c s3-fetch   # init container log — S3 list successful?
+```
+
+### Step 9 — Test in browser
+
+```bash
+# NLB DNS lo
+kubectl get svc -n traefik -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'
+
+# Browser mein open karo:
+# http://<NLB-DNS>/
+# Page dikhega: S3 Buckets listed — Pod Identity working!
+```
+
+### Step 10 — Destroy (jab kaam ho jaaye)
+
+```bash
+# App aur Traefik pehle hataao (NLB delete ho)
+helm uninstall s3-lister -n default
+helm uninstall traefik -n traefik
+
+# Phir tofu destroy
+cd iac/envs/dev
+tofu destroy -var-file=dev.tfvars
+# "yes" type karo
+# ~10 min — sab delete ho jaayega
+```
+
+---
+
 ## Concept Summary
 
 | Concept | Key Point |
@@ -1346,7 +1603,7 @@ helm upgrade --install s3-lister ./app/s3-lister/chart \
 | IaC | Infrastructure as Code — repeatable, auditable, destroyable |
 | OpenTofu | Terraform fork — BSL license → OpenTofu MPL 2.0 (Linux Foundation) |
 | State | OpenTofu ki notebook — kya ban gaya ka record |
-| Remote State | S3 + use_lockfile=true — no DynamoDB needed (OpenTofu 1.8+) |
+| Remote State | S3 + use_lockfile=true — no DynamoDB needed (OpenTofu 1.10+) |
 | Provider | Plugin — OpenTofu → AWS API. Always pin version |
 | Resource | Ek AWS cheez banao. References se dependency graph banta hai |
 | Variable | Input — hardcode mat karo. tfvars se values do |
