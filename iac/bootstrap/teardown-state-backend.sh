@@ -2,6 +2,7 @@
 # Teardown bootstrap resources — run AFTER tofu destroy completes.
 # Deletes: S3 state bucket (all versions) + Docker Hub secret from Secrets Manager
 # WARNING: State file will be gone — only run when you're fully done with this environment.
+# No external tools needed — uses only AWS CLI (no jq)
 
 set -e
 
@@ -15,21 +16,22 @@ echo "=== Bootstrap Teardown ==="
 echo "Bucket : s3://$BUCKET"
 echo "Secret : $SECRET_NAME"
 echo ""
-echo "WARNING: This deletes the state file and Docker Hub secret permanently."
+echo "WARNING: Deletes state file and Docker Hub secret permanently."
 read -p "Type 'yes' to continue: " CONFIRM
 [ "$CONFIRM" = "yes" ] || { echo "Aborted."; exit 1; }
 
-# Delete all object versions (versioning = delete markers pile up)
+# Delete all object versions using AWS CLI --query (no jq needed)
 echo ""
 echo "--> Deleting all object versions from s3://$BUCKET..."
 aws s3api list-object-versions \
   --profile $AWS_PROFILE \
   --bucket $BUCKET \
-  --query 'Versions[].{Key:Key,VersionId:VersionId}' \
-  --output json | \
-jq -r '.[] | "--key \"\(.Key)\" --version-id \"\(.VersionId)\""' | \
-while read args; do
-  eval aws s3api delete-object --profile $AWS_PROFILE --bucket $BUCKET $args
+  --query 'Versions[].[Key,VersionId]' \
+  --output text 2>/dev/null | \
+while read key version; do
+  [ -z "$key" ] && continue
+  aws s3api delete-object --profile $AWS_PROFILE --bucket $BUCKET \
+    --key "$key" --version-id "$version" > /dev/null
 done
 
 # Delete all delete markers
@@ -37,11 +39,12 @@ echo "--> Deleting all delete markers..."
 aws s3api list-object-versions \
   --profile $AWS_PROFILE \
   --bucket $BUCKET \
-  --query 'DeleteMarkers[].{Key:Key,VersionId:VersionId}' \
-  --output json | \
-jq -r '.[] | "--key \"\(.Key)\" --version-id \"\(.VersionId)\""' | \
-while read args; do
-  eval aws s3api delete-object --profile $AWS_PROFILE --bucket $BUCKET $args
+  --query 'DeleteMarkers[].[Key,VersionId]' \
+  --output text 2>/dev/null | \
+while read key version; do
+  [ -z "$key" ] && continue
+  aws s3api delete-object --profile $AWS_PROFILE --bucket $BUCKET \
+    --key "$key" --version-id "$version" > /dev/null
 done
 
 # Delete the bucket
