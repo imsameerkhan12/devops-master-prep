@@ -1,6 +1,10 @@
 # EKS Module
 # Uses community terraform-aws-modules/eks v20.x
 # Includes: cluster, managed node group, all add-ons, EKS access entry
+#
+# IAM approach: Pod Identity for all addons (NOT IRSA)
+#   Pod Identity = simpler, no OIDC federation needed, same-account standard
+#   IRSA = only needed for cross-account access (not our case)
 
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
@@ -19,7 +23,7 @@ module "eks" {
   # Automatically gives cluster creator admin access
   enable_cluster_creator_admin_permissions = true
 
-  # Add-ons — same as eksctl cluster-config.yaml
+  # Add-ons — Pod Identity used for EBS CSI (not IRSA)
   cluster_addons = {
     vpc-cni = {
       most_recent = true
@@ -31,8 +35,12 @@ module "eks" {
       most_recent = true
     }
     aws-ebs-csi-driver = {
-      most_recent              = true
-      service_account_role_arn = module.ebs_csi_irsa.iam_role_arn
+      most_recent = true
+      # Pod Identity association — AWS side pe hogi, no SA annotation needed
+      pod_identity_association = [{
+        role_arn        = aws_iam_role.ebs_csi.arn
+        service_account = "ebs-csi-controller-sa"
+      }]
     }
     eks-pod-identity-agent = {
       most_recent = true
@@ -66,23 +74,31 @@ module "eks" {
   tags = var.tags
 }
 
-# IRSA for EBS CSI driver
-# IRSA = pod-level IAM via OIDC — EBS CSI needs AWS API access
-module "ebs_csi_irsa" {
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "~> 5.0"
+# IAM Role for EBS CSI driver — Pod Identity trust policy
+# pods.eks.amazonaws.com = Pod Identity ka principal (OIDC nahi)
+resource "aws_iam_role" "ebs_csi" {
+  name = "${var.cluster_name}-ebs-csi"
 
-  role_name             = "${var.cluster_name}-ebs-csi"
-  attach_ebs_csi_policy = true
-
-  oidc_providers = {
-    main = {
-      provider_arn               = module.eks.oidc_provider_arn
-      namespace_service_accounts = ["kube-system:ebs-csi-controller-sa"]
-    }
-  }
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "pods.eks.amazonaws.com"
+      }
+      Action = [
+        "sts:AssumeRole",
+        "sts:TagSession"
+      ]
+    }]
+  })
 
   tags = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "ebs_csi" {
+  role       = aws_iam_role.ebs_csi.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
 }
 
 # EKS Access Entry — sameer IAM user ko cluster admin banao
