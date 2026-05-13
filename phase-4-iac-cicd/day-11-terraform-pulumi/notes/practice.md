@@ -1544,54 +1544,61 @@ kubectl get nodes   # nodes Ready hone chahiye
 kubectl get pods -n kube-system   # addons running hone chahiye
 ```
 
-### Step 7 — Traefik install (Helm)
+### Step 7 — Gateway API CRDs
 
 ```bash
-helm repo add traefik https://traefik.github.io/charts
-helm repo update
+# Traefik v3.7.1 needs v1.5.1 — v1.2.1 mein TLSRoute/BackendTLSPolicy missing
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.5.1/standard-install.yaml
+```
 
+### Step 8 — Traefik install (Helm)
+
+```bash
+# image.registry alag set karo — chart registry+repository separately prepend karta hai
+# gateway.create=false via values.yaml (Traefik apna Gateway banata hai from=All ke saath)
 helm upgrade --install traefik traefik/traefik \
   -n traefik --create-namespace \
-  -f app/traefik/values.yaml
+  -f app/traefik/values.yaml \
+  --set "image.registry=<account-id>.dkr.ecr.<region>.amazonaws.com" \
+  --wait
 
-# NLB DNS dhundho
-kubectl get svc -n traefik
-# EXTERNAL-IP = xyz.elb.amazonaws.com → ye browser mein khulega
+kubectl get pods -n traefik      # Running
+kubectl get gateway -n traefik   # PROGRAMMED = True
 ```
 
-### Step 8 — s3-lister app deploy (Helm)
+### Step 9 — s3-lister app deploy (Helm)
 
 ```bash
+ECR="<account-id>.dkr.ecr.<region>.amazonaws.com"
+
 helm upgrade --install s3-lister ./app/s3-lister/chart \
-  -n default
+  -n default \
+  --set "image.init=${ECR}/docker-hub/amazon/aws-cli:latest" \
+  --set "image.nginx=${ECR}/docker-hub/library/nginx:alpine" \
+  --set "gateway.create=false" \
+  --wait
 
-kubectl get pods   # s3-lister pod Running hona chahiye
-kubectl logs <pod> -c s3-fetch   # init container log — S3 list successful?
+kubectl get pods          # Running
+kubectl get httproute     # Accepted = True
 ```
 
-### Step 9 — Test in browser
+### Step 10 — Test in browser
 
 ```bash
-# NLB DNS lo
-kubectl get svc -n traefik -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'
-
-# Browser mein open karo:
-# http://<NLB-DNS>/
-# Page dikhega: S3 Buckets listed — Pod Identity working!
+kubectl get svc -n traefik -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+# http://<NLB-DNS>/ → S3 Buckets listed, Pod Identity working
 ```
 
-### Step 10 — Destroy (jab kaam ho jaaye)
+### Step 11 — Destroy (jab kaam ho jaaye)
 
 ```bash
-# App aur Traefik pehle hataao (NLB delete ho)
+# Order matters — Helm pehle, tofu baad mein
+# Warna NLB dangling rehta hai (AWS mein orphan)
 helm uninstall s3-lister -n default
 helm uninstall traefik -n traefik
 
-# Phir tofu destroy
 cd iac/envs/dev
-tofu destroy -var-file=dev.tfvars
-# "yes" type karo
-# ~10 min — sab delete ho jaayega
+tofu destroy -var-file=dev.tfvars   # ~10-15 min
 ```
 
 ---
