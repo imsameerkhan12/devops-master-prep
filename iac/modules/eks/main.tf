@@ -23,7 +23,6 @@ module "eks" {
   # Automatically gives cluster creator admin access
   enable_cluster_creator_admin_permissions = true
 
-  # Add-ons — Pod Identity used for EBS CSI (not IRSA)
   cluster_addons = {
     vpc-cni = {
       most_recent = true
@@ -36,11 +35,7 @@ module "eks" {
     }
     aws-ebs-csi-driver = {
       most_recent = true
-      # Pod Identity association — AWS side pe hogi, no SA annotation needed
-      pod_identity_association = [{
-        role_arn        = aws_iam_role.ebs_csi.arn
-        service_account = "ebs-csi-controller-sa"
-      }]
+      # Pod Identity association created explicitly below — cleaner + explicit
     }
     eks-pod-identity-agent = {
       most_recent = true
@@ -99,6 +94,16 @@ resource "aws_iam_role" "ebs_csi" {
 resource "aws_iam_role_policy_attachment" "ebs_csi" {
   role       = aws_iam_role.ebs_csi.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+}
+
+# Pod Identity Association — EBS CSI addon ke liye
+# Explicit resource — module ke internal attribute pe depend nahi karte
+# Cluster + addon exist karne ke baad banta hai (depends_on via cluster_name reference)
+resource "aws_eks_pod_identity_association" "ebs_csi" {
+  cluster_name    = module.eks.cluster_name
+  namespace       = "kube-system"
+  service_account = "ebs-csi-controller-sa"
+  role_arn        = aws_iam_role.ebs_csi.arn
 }
 
 # EKS Access Entry — sameer IAM user ko cluster admin banao

@@ -4,7 +4,6 @@
 # Data source — existing AWS account info fetch karo
 # Data source = read-only, kuch banata nahi — sirf padhta hai
 data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
 
 # VPC Module — poora networking banao
 module "vpc" {
