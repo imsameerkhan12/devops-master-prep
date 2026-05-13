@@ -25,3 +25,13 @@ output "kubectl_config_command" {
   description = "Run this after tofu apply to configure kubectl"
   value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${var.cluster_name} --profile ${var.aws_profile}"
 }
+
+output "s3_bucket_name" {
+  description = "S3 bucket name — app lists this"
+  value       = aws_s3_bucket.app.id
+}
+
+output "s3_reader_role_arn" {
+  description = "IAM role ARN for s3-reader Pod Identity"
+  value       = aws_iam_role.s3_reader.arn
+}
