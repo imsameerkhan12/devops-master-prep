@@ -1,0 +1,32 @@
+# Traefik Helm Values
+# Cloud-agnostic ingress controller — Gateway API support
+# Install: helm install traefik traefik/traefik -n traefik --create-namespace -f app/traefik/values.yaml
+
+# Gateway API mode — modern standard (Ingress ka replacement)
+# Traefik Ingress annotation wala purana tarika nahi
+providers:
+  kubernetesIngress:
+    enabled: false         # old Ingress — disable
+  kubernetesGateway:
+    enabled: true          # Gateway API — enable
+
+# NLB banao — L4 load balancer, Traefik ke liye sahi
+# ALB = L7, HTTP-aware — Traefik already L7 handle karta hai, NLB better
+service:
+  type: LoadBalancer
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "external"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+
+# GatewayClass — Traefik is the controller for "traefik" class
+gatewayClass:
+  enabled: true
+  name: traefik
+
+# Ports
+ports:
+  web:
+    port: 8000
+    exposedPort: 80
+    protocol: TCP

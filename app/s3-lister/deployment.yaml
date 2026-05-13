@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: s3-lister
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: s3-lister
+  template:
+    metadata:
+      labels:
+        app: s3-lister
+    spec:
+      serviceAccountName: s3-reader-sa   # Pod Identity isko dekh ke AWS creds inject karega
+
+      # Init container — AWS CLI se S3 list karo, HTML banao
+      # Pod Identity Agent automatically creds provide karega
+      initContainers:
+        - name: s3-fetch
+          image: amazon/aws-cli:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "<html>
+              <head><title>S3 Lister — Pod Identity Demo</title>
+              <style>body{font-family:sans-serif;max-width:600px;margin:40px auto;padding:20px}
+              h1{color:#232f3e}li{margin:8px 0;font-size:18px}</style></head>
+              <body>
+              <h1>S3 Buckets</h1>
+              <p>Listed using <strong>Pod Identity</strong> — no hardcoded credentials</p>
+              <ul>" > /html/index.html
+              aws s3 ls --region $AWS_REGION | awk '{print "<li>"$3"</li>"}' >> /html/index.html
+              echo "</ul>
+              <hr><small>Pod: $HOSTNAME | ServiceAccount: s3-reader-sa</small>
+              </body></html>" >> /html/index.html
+              echo "HTML generated successfully"
+          env:
+            - name: AWS_REGION
+              value: "us-east-1"
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+          volumeMounts:
+            - name: html
+              mountPath: /html
+
+      # Main container — nginx HTML serve karo
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "100m"
+              memory: "128Mi"
+
+      volumes:
+        - name: html
+          emptyDir: {}

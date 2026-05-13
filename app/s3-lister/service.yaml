@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: s3-lister
+  namespace: default
+spec:
+  selector:
+    app: s3-lister
+  ports:
+    - port: 80
+      targetPort: 80
+  type: ClusterIP   # Sirf cluster ke andar — Traefik bahar expose karega
