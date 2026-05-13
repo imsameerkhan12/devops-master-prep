@@ -107,6 +107,19 @@ resource "aws_ecr_repository" "docker_hub_nginx" {
   depends_on = [aws_ecr_pull_through_cache_rule.docker_hub]
 }
 
+resource "aws_ecr_repository" "docker_hub_traefik" {
+  name                 = "docker-hub/library/traefik"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  tags       = var.tags
+  depends_on = [aws_ecr_pull_through_cache_rule.docker_hub]
+}
+
 # ECR Lifecycle Policy — purani images clean karo automatically
 # Production best practice: storage cost control + security (old CVE images)
 locals {
@@ -131,6 +144,11 @@ resource "aws_ecr_lifecycle_policy" "docker_hub_aws_cli" {
 
 resource "aws_ecr_lifecycle_policy" "docker_hub_nginx" {
   repository = aws_ecr_repository.docker_hub_nginx.name
+  policy     = local.ecr_lifecycle_policy
+}
+
+resource "aws_ecr_lifecycle_policy" "docker_hub_traefik" {
+  repository = aws_ecr_repository.docker_hub_traefik.name
   policy     = local.ecr_lifecycle_policy
 }
 
