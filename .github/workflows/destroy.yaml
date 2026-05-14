@@ -132,6 +132,56 @@ jobs:
             echo "NLBs cleared."
           fi
 
+      # ── Force-clean orphaned ENIs ─────────────────────────────────────────
+      # EKS VPC CNI (aws-node) leaves ENIs in subnets after node group deletion.
+      # These block subnet + security group deletion → DependencyViolation.
+      # Must run after NLB wait, before tofu destroy.
+      - name: Force-clean orphaned ENIs
+        run: |
+          # Get VPC ID — try EKS first, fall back to tag lookup (works after partial destroy)
+          VPC_ID=$(aws eks describe-cluster \
+            --name ${{ vars.CLUSTER_NAME }} \
+            --query 'cluster.resourcesVpcConfig.vpcId' \
+            --output text 2>/dev/null || echo "")
+
+          if [ -z "$VPC_ID" ] || [ "$VPC_ID" = "None" ]; then
+            VPC_ID=$(aws ec2 describe-vpcs \
+              --filters "Name=tag:kubernetes.io/cluster/${{ vars.CLUSTER_NAME }},Values=owned" \
+              --query 'Vpcs[0].VpcId' \
+              --output text 2>/dev/null || echo "")
+          fi
+
+          if [ -z "$VPC_ID" ] || [ "$VPC_ID" = "None" ]; then
+            echo "VPC not found — skipping ENI cleanup"
+            exit 0
+          fi
+
+          echo "VPC: $VPC_ID — cleaning orphaned ENIs..."
+
+          # Delete available (detached) ENIs
+          aws ec2 describe-network-interfaces \
+            --filters "Name=vpc-id,Values=$VPC_ID" "Name=status,Values=available" \
+            --query 'NetworkInterfaces[].NetworkInterfaceId' \
+            --output text | tr '\t' '\n' | while read eni; do
+            [ -z "$eni" ] && continue
+            echo "  Deleting available ENI: $eni"
+            aws ec2 delete-network-interface --network-interface-id "$eni" || true
+          done
+
+          # Force-detach and delete in-use ENIs not marked DeleteOnTermination
+          aws ec2 describe-network-interfaces \
+            --filters "Name=vpc-id,Values=$VPC_ID" "Name=status,Values=in-use" \
+            --query 'NetworkInterfaces[?Attachment.DeleteOnTermination==`false`].[NetworkInterfaceId,Attachment.AttachmentId]' \
+            --output text | while read eni attachment; do
+            [ -z "$eni" ] && continue
+            echo "  Force-detaching ENI: $eni"
+            aws ec2 detach-network-interface --attachment-id "$attachment" --force || true
+            sleep 5
+            aws ec2 delete-network-interface --network-interface-id "$eni" || true
+          done
+
+          echo "ENI cleanup done."
+
       # ── OpenTofu Destroy ──────────────────────────────────────────────────
       - name: OpenTofu Destroy
         working-directory: iac/envs/dev
