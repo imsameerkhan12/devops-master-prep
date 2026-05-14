@@ -40,6 +40,23 @@ module "eks" {
   depends_on = [module.vpc]
 }
 
+# Node group IAM policy attachments — managed explicitly so they survive partial-failed applies
+# Community module's iam_role_additional_policies can get lost when node group is recreated mid-apply
+resource "aws_iam_role_policy_attachment" "node_worker" {
+  role       = module.eks.node_group_role_name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+}
+
+resource "aws_iam_role_policy_attachment" "node_cni" {
+  role       = module.eks.node_group_role_name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+}
+
+resource "aws_iam_role_policy_attachment" "node_ecr_readonly" {
+  role       = module.eks.node_group_role_name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
 # ─────────────────────────────────────────────
 # ECR LAYER — Container Image Registry
 # ─────────────────────────────────────────────

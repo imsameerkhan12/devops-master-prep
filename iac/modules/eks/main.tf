@@ -58,11 +58,8 @@ module "eks" {
 
       subnet_ids = var.node_subnet_ids
 
-      iam_role_additional_policies = {
-        AmazonEKSWorkerNodePolicy          = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
-        AmazonEKS_CNI_Policy               = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
-        AmazonEC2ContainerRegistryReadOnly = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-      }
+      # Policies managed explicitly in dev/main.tf via aws_iam_role_policy_attachment
+      # (module-internal iam_role_additional_policies can get lost on partial-failed applies)
     }
   }
 
