@@ -32,6 +32,7 @@ concurrency:
 
 env:
   AWS_REGION: us-east-1
+  TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform.d/plugin-cache
 
 jobs:
   destroy:
@@ -61,6 +62,20 @@ jobs:
 
       - name: Setup Helm
         uses: azure/setup-helm@v4
+
+      # Cache provider plugins — keyed on lock file so cache busts only when
+      # provider versions change. Avoids re-downloading on every run and makes
+      # the workflow immune to transient GitHub registry timeouts.
+      - name: Cache OpenTofu Providers
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.TF_PLUGIN_CACHE_DIR }}
+          key: tofu-providers-${{ runner.os }}-${{ hashFiles('iac/envs/dev/.terraform.lock.hcl') }}
+          restore-keys: |
+            tofu-providers-${{ runner.os }}-
+
+      - name: Create Plugin Cache Dir
+        run: mkdir -p ${{ env.TF_PLUGIN_CACHE_DIR }}
 
       - name: Setup OpenTofu
         uses: opentofu/setup-opentofu@v1
@@ -121,7 +136,17 @@ jobs:
       - name: OpenTofu Destroy
         working-directory: iac/envs/dev
         run: |
-          tofu init
+          # Retry tofu init up to 3 times to handle transient registry timeouts
+          for attempt in 1 2 3; do
+            echo "=== tofu init attempt ${attempt}/3 ==="
+            tofu init && break
+            if [ $attempt -eq 3 ]; then
+              echo "tofu init failed after 3 attempts"
+              exit 1
+            fi
+            echo "Retrying in 15s..."
+            sleep 15
+          done
           tofu destroy -auto-approve --var-file=dev.tfvars --var='aws_profile='
 
       # ── Optional: delete state bucket ─────────────────────────────────────
