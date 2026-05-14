@@ -214,12 +214,23 @@ jobs:
             sleep 15
           done
 
-          clean_enis() {
-            local VPC_ID
+          # Capture VPC ID NOW — before tofu destroy removes the kubernetes cluster tag
+          VPC_ID=$(aws eks describe-cluster \
+            --name "$CLUSTER_NAME" \
+            --query 'cluster.resourcesVpcConfig.vpcId' \
+            --output text 2>/dev/null || echo "")
+          if [ -z "$VPC_ID" ] || [ "$VPC_ID" = "None" ]; then
             VPC_ID=$(aws ec2 describe-vpcs \
               --filters "Name=tag:kubernetes.io/cluster/${CLUSTER_NAME},Values=owned" \
               --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "")
-            [ -z "$VPC_ID" ] || [ "$VPC_ID" = "None" ] && return
+          fi
+          echo "VPC ID captured: ${VPC_ID:-not found}"
+
+          clean_enis() {
+            if [ -z "$VPC_ID" ] || [ "$VPC_ID" = "None" ]; then
+              echo "  No VPC ID — skipping ENI cleanup"
+              return
+            fi
             echo "  Cleaning ENIs in VPC $VPC_ID..."
             aws ec2 describe-network-interfaces \
               --filters "Name=vpc-id,Values=$VPC_ID" \
