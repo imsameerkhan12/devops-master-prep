@@ -202,20 +202,50 @@ jobs:
 
       # ── OpenTofu Destroy ──────────────────────────────────────────────────
       - name: OpenTofu Destroy
+        env:
+          CLUSTER_NAME: ${{ vars.CLUSTER_NAME }}
         working-directory: iac/envs/dev
         run: |
-          # Retry tofu init up to 3 times to handle transient registry timeouts
+          # Init
           for attempt in 1 2 3; do
             echo "=== tofu init attempt ${attempt}/3 ==="
             tofu init && break
-            if [ $attempt -eq 3 ]; then
-              echo "tofu init failed after 3 attempts"
-              exit 1
-            fi
-            echo "Retrying in 15s..."
+            [ $attempt -eq 3 ] && { echo "tofu init failed"; exit 1; }
             sleep 15
           done
-          tofu destroy -auto-approve --var-file=dev.tfvars --var='aws_profile='
+
+          clean_enis() {
+            local VPC_ID
+            VPC_ID=$(aws ec2 describe-vpcs \
+              --filters "Name=tag:kubernetes.io/cluster/${CLUSTER_NAME},Values=owned" \
+              --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "")
+            [ -z "$VPC_ID" ] || [ "$VPC_ID" = "None" ] && return
+            echo "  Cleaning ENIs in VPC $VPC_ID..."
+            aws ec2 describe-network-interfaces \
+              --filters "Name=vpc-id,Values=$VPC_ID" \
+              --query 'NetworkInterfaces[].[NetworkInterfaceId,Status,Attachment.AttachmentId]' \
+              --output text | while read eni status attachment; do
+              [ -z "$eni" ] && continue
+              if [ "$status" = "in-use" ] && [ -n "$attachment" ] && [ "$attachment" != "None" ]; then
+                aws ec2 detach-network-interface --attachment-id "$attachment" --force 2>/dev/null || true
+                sleep 5
+              fi
+              aws ec2 delete-network-interface --network-interface-id "$eni" 2>/dev/null || true
+            done
+            echo "  ENI cleanup done."
+          }
+
+          # Destroy with retry — EKS hyperplane ENIs are recreated during teardown
+          # and can block subnet deletion. Clean and retry up to 3 times.
+          for attempt in 1 2 3; do
+            echo "=== tofu destroy attempt ${attempt}/3 ==="
+            tofu destroy -auto-approve --var-file=dev.tfvars --var='aws_profile=' && break
+            [ $attempt -eq 3 ] && { echo "tofu destroy failed after 3 attempts"; exit 1; }
+            echo "Destroy failed — cleaning residual ENIs before retry..."
+            clean_enis
+            echo "Waiting 60s for AWS to release ENIs..."
+            sleep 60
+          done
 
       # ── Optional: delete state bucket ─────────────────────────────────────
       # Only runs if destroy_state_bucket=true in workflow inputs
