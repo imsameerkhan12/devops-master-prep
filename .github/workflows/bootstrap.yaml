@@ -166,7 +166,7 @@ jobs:
             --set "global.image.repository=${{ vars.ECR_REGISTRY }}/quay-io/argoproj/argocd" \
             --set "global.image.tag=${{ env.ARGOCD_TAG }}" \
             --set "redis.image.repository=${{ vars.ECR_REGISTRY }}/docker-hub/library/redis" \
-            --atomic --timeout=5m
+            --atomic --timeout=10m
 
       # ── cert-manager ─────────────────────────────────────────────────────
       - name: Install cert-manager
