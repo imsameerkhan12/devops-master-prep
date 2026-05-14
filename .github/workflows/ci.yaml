@@ -1,16 +1,14 @@
-# CI — Lint, validate, and verify s3-lister Helm chart
+# CI/CD — Lint, validate, and deploy s3-lister Helm chart
 #
 # Runs on: ARC runner (arc-runner-set) — self-hosted inside EKS
-# Why ARC: has VPC access, closer to the cluster, demonstrates ARC is working
+# Why ARC: has VPC access, kubeconfig via IRSA, demonstrates ARC is working
 #
-# For apps with a custom Docker build, this workflow would also:
-#   1. Build Docker image
-#   2. Push to ECR
-#   3. Update image tag in values.yaml + commit (GitOps trigger)
-#   4. ArgoCD detects git change → auto-deploys
+# Flow:
+#   PR  → lint + template (validate only, no deploy)
+#   main → lint + template + helm upgrade (direct deploy to cluster)
 #
-# s3-lister uses standard images (nginx, aws-cli) so no build step is needed.
-# ArgoCD auto-syncs on any chart change pushed to main.
+# No CD controller (ArgoCD/Flux) — ARC runner IS the CD.
+# For real apps with Docker builds, add: docker build → ECR push before deploy step.
 
 name: CI
 
@@ -27,21 +25,36 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  AWS_REGION: us-east-1
+
 jobs:
-  lint-and-validate:
-    name: Helm Lint + Validate
+  lint-and-deploy:
+    name: Lint + Deploy
     runs-on: arc-runner-set  # self-hosted ARC runner in EKS
 
     permissions:
-      id-token: write  # OIDC for AWS (needed if job touches AWS)
+      id-token: write  # OIDC for AWS
       contents: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
       - name: Setup Helm
         uses: azure/setup-helm@v4
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name ${{ vars.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
 
       - name: Helm Lint
         run: helm lint app/s3-lister/chart
@@ -49,24 +62,19 @@ jobs:
       - name: Helm Template (render + validate YAML)
         run: |
           helm template s3-lister app/s3-lister/chart \
-            --set "image.init=test/aws-cli:latest" \
-            --set "image.nginx=test/nginx:alpine"
+            --set "image.init=${{ vars.ECR_REGISTRY }}/docker-hub/amazon/aws-cli:latest" \
+            --set "image.nginx=${{ vars.ECR_REGISTRY }}/docker-hub/library/nginx:alpine"
 
-      # Verify ArgoCD Application manifest is valid YAML
-      - name: Validate ArgoCD Application manifest
-        run: |
-          python3 -c "
-          import yaml, sys
-          with open('app/argocd/application.yaml') as f:
-              doc = yaml.safe_load(f)
-          assert doc['kind'] == 'Application', 'Expected ArgoCD Application kind'
-          print('ArgoCD Application manifest: valid')
-          "
-
-      # On main branch: trigger ArgoCD hard refresh (force re-check of git)
-      # ArgoCD auto-sync handles the actual deploy — no kubectl apply needed here
-      - name: Trigger ArgoCD Refresh (main only)
+      # Deploy only on main — PR runs lint/validate only
+      - name: Deploy s3-lister
         if: github.ref == 'refs/heads/main'
         run: |
-          kubectl annotate application s3-lister -n argocd \
-            argocd.argoproj.io/refresh=hard --overwrite || true
+          helm upgrade --install s3-lister app/s3-lister/chart \
+            -n default \
+            --set "image.init=${{ vars.ECR_REGISTRY }}/docker-hub/amazon/aws-cli:latest" \
+            --set "image.nginx=${{ vars.ECR_REGISTRY }}/docker-hub/library/nginx:alpine" \
+            --atomic --timeout=3m
+
+      - name: Verify deploy
+        if: github.ref == 'refs/heads/main'
+        run: kubectl rollout status deployment/s3-lister -n default --timeout=2m

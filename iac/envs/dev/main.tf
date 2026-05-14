@@ -233,16 +233,7 @@ resource "aws_ecr_repository" "ghcr_arc_controller" {
   tags = var.tags
 }
 
-# ArgoCD image
-resource "aws_ecr_repository" "quay_argocd" {
-  name                 = "quay-io/argoproj/argocd"
-  image_tag_mutability = "MUTABLE"
-  force_delete         = true
-  image_scanning_configuration { scan_on_push = true }
-  tags = var.tags
-}
-
-# ArgoCD Redis — docker-hub pull-through cache handles this automatically
+# docker-hub pull-through cache handles redis automatically
 resource "aws_ecr_repository" "docker_hub_redis" {
   name                 = "docker-hub/library/redis"
   image_tag_mutability = "MUTABLE"
@@ -293,11 +284,6 @@ resource "aws_ecr_lifecycle_policy" "ghcr_actions_runner" {
 
 resource "aws_ecr_lifecycle_policy" "ghcr_arc_controller" {
   repository = aws_ecr_repository.ghcr_arc_controller.name
-  policy     = local.ecr_lifecycle_policy
-}
-
-resource "aws_ecr_lifecycle_policy" "quay_argocd" {
-  repository = aws_ecr_repository.quay_argocd.name
   policy     = local.ecr_lifecycle_policy
 }
 

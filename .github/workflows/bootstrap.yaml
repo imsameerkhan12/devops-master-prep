@@ -24,7 +24,6 @@ concurrency:
 env:
   AWS_REGION: us-east-1
   ARC_CHART_VERSION: "0.10.1"
-  ARGOCD_CHART_VERSION: "7.8.0"
   CERT_MANAGER_CHART_VERSION: "1.17.0"
   GATEWAY_API_VERSION: "v1.5.1"
 
@@ -83,15 +82,6 @@ jobs:
           push_image \
             "ghcr.io/actions/gha-runner-scale-set-controller:${{ env.ARC_CHART_VERSION }}" \
             "${ECR}/ghcr-io/actions/gha-runner-scale-set-controller:${{ env.ARC_CHART_VERSION }}"
-
-          # ArgoCD — get image tag from chart appVersion
-          helm repo add argo https://argoproj.github.io/argo-helm --force-update
-          ARGOCD_TAG="$(helm show chart argo/argo-cd --version ${{ env.ARGOCD_CHART_VERSION }} | grep ^appVersion | awk '{print $2}' | tr -d '"')"
-          echo "ArgoCD image tag: $ARGOCD_TAG"
-          echo "ARGOCD_TAG=${ARGOCD_TAG}" >> $GITHUB_ENV
-          push_image \
-            "quay.io/argoproj/argocd:${ARGOCD_TAG}" \
-            "${ECR}/quay-io/argoproj/argocd:${ARGOCD_TAG}"
 
           # cert-manager — image version matches chart version
           CM_TAG="v${{ env.CERT_MANAGER_CHART_VERSION }}"
@@ -154,20 +144,6 @@ jobs:
             --set "template.spec.containers[0].image=${{ vars.ECR_REGISTRY }}/ghcr-io/actions/actions-runner:latest" \
             --atomic --timeout=3m
 
-      # ── ArgoCD ────────────────────────────────────────────────────────────
-      - name: Install ArgoCD
-        run: |
-          helm repo add argo https://argoproj.github.io/argo-helm
-          helm repo update argo
-          helm upgrade --install argocd argo/argo-cd \
-            --version ${{ env.ARGOCD_CHART_VERSION }} \
-            -n argocd --create-namespace \
-            -f app/argocd/values.yaml \
-            --set "global.image.repository=${{ vars.ECR_REGISTRY }}/quay-io/argoproj/argocd" \
-            --set "global.image.tag=${{ env.ARGOCD_TAG }}" \
-            --set "redis.image.repository=${{ vars.ECR_REGISTRY }}/docker-hub/library/redis" \
-            --atomic --timeout=10m
-
       # ── cert-manager ─────────────────────────────────────────────────────
       - name: Install cert-manager
         run: |
@@ -188,12 +164,6 @@ jobs:
             --set "startupapicheck.image.tag=${CM_TAG}" \
             --atomic --timeout=5m
 
-      # ── s3-lister via ArgoCD ──────────────────────────────────────────────
-      # ECR_REGISTRY placeholder substituted here — not stored in git
-      - name: Deploy s3-lister Application
-        run: |
-          sed "s|ECR_REGISTRY|${{ vars.ECR_REGISTRY }}|g" app/argocd/application.yaml | kubectl apply -f -
-
       - name: Summary
         run: |
           echo "=== Platform Bootstrap Complete ==="
@@ -201,8 +171,8 @@ jobs:
           echo "Traefik NLB:"
           kubectl get svc -n traefik traefik -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' && echo ""
           echo ""
-          echo "ArgoCD admin password:"
-          kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d && echo ""
-          echo ""
           echo "ARC Runner status:"
           kubectl get pods -n arc-runners
+          echo ""
+          echo "cert-manager status:"
+          kubectl get pods -n cert-manager

@@ -1,13 +1,12 @@
 # Destroy Infrastructure — removes ALL AWS resources that cost money
 #
 # Order matters:
-#   1. ArgoCD Application (stop GitOps sync — prevents re-deploy during destroy)
-#   2. Apps (s3-lister)
-#   3. Platform tools (ArgoCD, cert-manager, ARC, Traefik)
+#   1. Apps (s3-lister)
+#   2. Platform tools (cert-manager, ARC, Traefik)
 #      ↑ Traefik MUST be last before tofu — it owns the NLB
-#   4. Wait for NLB deletion — NLB ENIs block VPC deletion
-#   5. tofu destroy — tears down EKS, VPC, ECR, IAM, S3 bucket
-#   6. Optional: teardown state bucket + Docker Hub secret
+#   3. Wait for NLB deletion — NLB ENIs block VPC deletion
+#   4. tofu destroy — tears down EKS, VPC, ECR, IAM, S3 bucket
+#   5. Optional: teardown state bucket + Docker Hub secret
 #
 # Runs on: GitHub-hosted runner (ARC is being torn down — can't use it)
 
@@ -73,14 +72,8 @@ jobs:
 
       # ── Uninstall in reverse order ────────────────────────────────────────
 
-      - name: Remove ArgoCD Application (stop GitOps sync)
-        run: kubectl delete application s3-lister -n argocd --ignore-not-found || true
-
       - name: Uninstall s3-lister
         run: helm uninstall s3-lister -n default --ignore-not-found --wait 2>/dev/null || true
-
-      - name: Uninstall ArgoCD
-        run: helm uninstall argocd -n argocd --ignore-not-found --wait 2>/dev/null || true
 
       - name: Uninstall cert-manager
         run: helm uninstall cert-manager -n cert-manager --ignore-not-found --wait 2>/dev/null || true
