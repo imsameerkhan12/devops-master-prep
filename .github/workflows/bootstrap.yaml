@@ -56,6 +56,51 @@ jobs:
       - name: Update kubeconfig
         run: aws eks update-kubeconfig --name ${{ vars.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
 
+      # ── Pre-push images to ECR ────────────────────────────────────────────
+      # GitHub-hosted runner has internet — pull from public registries, push to ECR
+      # EKS nodes (private subnet, no NAT) then pull from ECR via VPC endpoint
+      # ghcr.io + quay.io require credentials for pull-through cache → pre-push instead
+      - name: Pre-push images to ECR
+        run: |
+          ECR="${{ vars.ECR_REGISTRY }}"
+
+          # ECR login
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+            docker login --username AWS --password-stdin "$ECR"
+
+          push_image() {
+            local src="$1" dst="$2"
+            echo "→ $src"
+            docker pull "$src"
+            docker tag "$src" "$dst"
+            docker push "$dst"
+          }
+
+          # ARC — controller image tag matches chart version
+          push_image \
+            "ghcr.io/actions/actions-runner:latest" \
+            "${ECR}/ghcr-io/actions/actions-runner:latest"
+          push_image \
+            "ghcr.io/actions/gha-runner-scale-set-controller:${{ env.ARC_CHART_VERSION }}" \
+            "${ECR}/ghcr-io/actions/gha-runner-scale-set-controller:${{ env.ARC_CHART_VERSION }}"
+
+          # ArgoCD — get image tag from chart appVersion
+          helm repo add argo https://argoproj.github.io/argo-helm --force-update
+          ARGOCD_TAG="v$(helm show chart argo/argo-cd --version ${{ env.ARGOCD_CHART_VERSION }} | grep ^appVersion | awk '{print $2}' | tr -d '"')"
+          echo "ArgoCD image tag: $ARGOCD_TAG"
+          echo "ARGOCD_TAG=${ARGOCD_TAG}" >> $GITHUB_ENV
+          push_image \
+            "quay.io/argoproj/argocd:${ARGOCD_TAG}" \
+            "${ECR}/quay-io/argoproj/argocd:${ARGOCD_TAG}"
+
+          # cert-manager — image version matches chart version
+          CM_TAG="v${{ env.CERT_MANAGER_CHART_VERSION }}"
+          for img in cert-manager-controller cert-manager-cainjector cert-manager-webhook cert-manager-startupapicheck; do
+            push_image \
+              "quay.io/jetstack/${img}:${CM_TAG}" \
+              "${ECR}/quay-io/jetstack/${img}:${CM_TAG}"
+          done
+
       # ── Gateway API CRDs ──────────────────────────────────────────────────
       - name: Install Gateway API CRDs
         run: |
@@ -119,6 +164,7 @@ jobs:
             -n argocd --create-namespace \
             -f app/argocd/values.yaml \
             --set "global.image.repository=${{ vars.ECR_REGISTRY }}/quay-io/argoproj/argocd" \
+            --set "global.image.tag=${{ env.ARGOCD_TAG }}" \
             --set "redis.image.repository=${{ vars.ECR_REGISTRY }}/docker-hub/library/redis" \
             --atomic --timeout=5m
 
@@ -127,14 +173,19 @@ jobs:
         run: |
           helm repo add jetstack https://charts.jetstack.io
           helm repo update jetstack
+          CM_TAG="v${{ env.CERT_MANAGER_CHART_VERSION }}"
           helm upgrade --install cert-manager jetstack/cert-manager \
             --version ${{ env.CERT_MANAGER_CHART_VERSION }} \
             -n cert-manager --create-namespace \
             --set crds.enabled=true \
             --set "image.repository=${{ vars.ECR_REGISTRY }}/quay-io/jetstack/cert-manager-controller" \
+            --set "image.tag=${CM_TAG}" \
             --set "cainjector.image.repository=${{ vars.ECR_REGISTRY }}/quay-io/jetstack/cert-manager-cainjector" \
+            --set "cainjector.image.tag=${CM_TAG}" \
             --set "webhook.image.repository=${{ vars.ECR_REGISTRY }}/quay-io/jetstack/cert-manager-webhook" \
+            --set "webhook.image.tag=${CM_TAG}" \
             --set "startupapicheck.image.repository=${{ vars.ECR_REGISTRY }}/quay-io/jetstack/cert-manager-startupapicheck" \
+            --set "startupapicheck.image.tag=${CM_TAG}" \
             --atomic --timeout=5m
 
       # ── s3-lister via ArgoCD ──────────────────────────────────────────────

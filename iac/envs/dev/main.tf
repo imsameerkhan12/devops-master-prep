@@ -74,12 +74,7 @@ resource "aws_iam_role_policy" "node_ecr_pull_through" {
         "ecr:BatchImportUpstreamImage",  # upstream se cache mein import karo
         "ecr:CreateRepository",          # first pull pe repo auto-create
       ]
-      Resource = [
-        "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/docker-hub/*",
-        "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/ghcr-io/*",
-        "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/quay-io/*",
-        "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/k8s-registry/*",
-      ]
+      Resource = "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/docker-hub/*"
     }]
   })
 }
@@ -216,31 +211,18 @@ resource "aws_eks_pod_identity_association" "s3_reader" {
 }
 
 # ─────────────────────────────────────────────
-# ECR LAYER — Additional pull-through caches
-# ghcr.io  → ARC runner images
-# quay.io  → ArgoCD + cert-manager images
+# ECR LAYER — Plain repos for ARC + ArgoCD + cert-manager images
+# Images pushed here by bootstrap workflow (GitHub-hosted runner has internet)
+# No pull-through cache needed — ghcr.io/quay.io require credentials for that
 # ─────────────────────────────────────────────
 
-# ghcr.io — GitHub Container Registry (public, no credentials needed)
-resource "aws_ecr_pull_through_cache_rule" "ghcr" {
-  ecr_repository_prefix = "ghcr-io"
-  upstream_registry_url = "ghcr.io"
-}
-
-# quay.io — Red Hat registry (public, no credentials needed)
-resource "aws_ecr_pull_through_cache_rule" "quay" {
-  ecr_repository_prefix = "quay-io"
-  upstream_registry_url = "quay.io"
-}
-
-# ARC images — pre-create so they don't orphan on destroy
+# ARC images
 resource "aws_ecr_repository" "ghcr_actions_runner" {
   name                 = "ghcr-io/actions/actions-runner"
   image_tag_mutability = "MUTABLE"
   force_delete         = true
   image_scanning_configuration { scan_on_push = true }
-  tags       = var.tags
-  depends_on = [aws_ecr_pull_through_cache_rule.ghcr]
+  tags = var.tags
 }
 
 resource "aws_ecr_repository" "ghcr_arc_controller" {
@@ -248,8 +230,7 @@ resource "aws_ecr_repository" "ghcr_arc_controller" {
   image_tag_mutability = "MUTABLE"
   force_delete         = true
   image_scanning_configuration { scan_on_push = true }
-  tags       = var.tags
-  depends_on = [aws_ecr_pull_through_cache_rule.ghcr]
+  tags = var.tags
 }
 
 # ArgoCD image
@@ -258,11 +239,10 @@ resource "aws_ecr_repository" "quay_argocd" {
   image_tag_mutability = "MUTABLE"
   force_delete         = true
   image_scanning_configuration { scan_on_push = true }
-  tags       = var.tags
-  depends_on = [aws_ecr_pull_through_cache_rule.quay]
+  tags = var.tags
 }
 
-# ArgoCD Redis — uses docker-hub (already set up)
+# ArgoCD Redis — docker-hub pull-through cache handles this automatically
 resource "aws_ecr_repository" "docker_hub_redis" {
   name                 = "docker-hub/library/redis"
   image_tag_mutability = "MUTABLE"
@@ -278,8 +258,7 @@ resource "aws_ecr_repository" "quay_cert_manager_controller" {
   image_tag_mutability = "MUTABLE"
   force_delete         = true
   image_scanning_configuration { scan_on_push = true }
-  tags       = var.tags
-  depends_on = [aws_ecr_pull_through_cache_rule.quay]
+  tags = var.tags
 }
 
 resource "aws_ecr_repository" "quay_cert_manager_cainjector" {
@@ -287,8 +266,7 @@ resource "aws_ecr_repository" "quay_cert_manager_cainjector" {
   image_tag_mutability = "MUTABLE"
   force_delete         = true
   image_scanning_configuration { scan_on_push = true }
-  tags       = var.tags
-  depends_on = [aws_ecr_pull_through_cache_rule.quay]
+  tags = var.tags
 }
 
 resource "aws_ecr_repository" "quay_cert_manager_webhook" {
@@ -296,8 +274,7 @@ resource "aws_ecr_repository" "quay_cert_manager_webhook" {
   image_tag_mutability = "MUTABLE"
   force_delete         = true
   image_scanning_configuration { scan_on_push = true }
-  tags       = var.tags
-  depends_on = [aws_ecr_pull_through_cache_rule.quay]
+  tags = var.tags
 }
 
 resource "aws_ecr_repository" "quay_cert_manager_startupapicheck" {
@@ -305,8 +282,7 @@ resource "aws_ecr_repository" "quay_cert_manager_startupapicheck" {
   image_tag_mutability = "MUTABLE"
   force_delete         = true
   image_scanning_configuration { scan_on_push = true }
-  tags       = var.tags
-  depends_on = [aws_ecr_pull_through_cache_rule.quay]
+  tags = var.tags
 }
 
 # Lifecycle policies for all new repos (reuse existing local)
