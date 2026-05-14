@@ -9,48 +9,25 @@
 githubConfigUrl: "https://github.com/imsameerkhan12/devops-master-prep"
 githubConfigSecret: "arc-github-app-secret"
 
-# Scale to zero when idle — no cost for idle runners
+# Scale to zero when idle — no cost when no jobs are queued
 minRunners: 0
 maxRunners: 5
 
-# Docker-in-Docker — required for container steps and general runner stability
-# dind injects: init-dind-externals init container + docker daemon sidecar
-# init-dind-externals copies docker binaries + waits for certs — fixes the
-# race condition where runner starts before docker daemon is ready
-containerMode:
-  type: "dind"
-
-  # Give the dind daemon enough privilege + resources so it starts before
-  # the runner container begins registration
-  dindContainerSecurityContext:
-    privileged: true
-
-  # Sidecar (docker daemon) resource limits — prevents it from starving the
-  # runner on t3.medium (2vCPU / 4GB). Without this the daemon can be OOMKilled
-  # mid-job causing the runner to exit immediately.
-  dindContainerResources:
-    requests:
-      cpu: "200m"
-      memory: "256Mi"
-    limits:
-      cpu: "1"
-      memory: "1Gi"
+# NO dind — CI workflow only runs kubectl/helm/aws CLI, zero docker commands.
+# dind adds a privileged sidecar that wastes RAM on t3.medium and introduces
+# a startup race condition. Only enable dind if you add docker build/push steps.
 
 template:
   spec:
-    # Runner container
     containers:
       - name: runner
-        # Use latest to avoid GitHub's enforced minimum-version rejections.
-        # GitHub enforces a floor version server-side — if the pinned image
-        # is below that floor, the runner registers then exits in ~2s.
-        # "latest" always satisfies the floor.
-        # Nodes are in public subnets so ghcr.io is reachable directly.
+        # latest = always satisfies GitHub's enforced minimum-version floor.
+        # Pinning a specific version risks the runner registering then
+        # immediately exiting if GitHub's floor has moved past that version.
         image: "ghcr.io/actions/actions-runner:latest"
 
-        # Resource limits are REQUIRED on t3.medium.
-        # Without limits: runner + dind daemon together can exceed 4GB →
-        # OOMKill → pod terminates immediately (looks like "not picking up jobs")
+        # Resource limits are required on t3.medium (2vCPU / 4GB).
+        # Without limits the runner can be OOMKilled before it picks up a job.
         resources:
           requests:
             cpu: "500m"
@@ -58,10 +35,3 @@ template:
           limits:
             cpu: "1500m"
             memory: "2Gi"
-
-    # Prevent runner from being evicted mid-job on a memory-pressured node
-    # PodDisruptionBudget is handled by ARC controller separately
-    tolerations:
-      - key: "node.kubernetes.io/memory-pressure"
-        operator: "Exists"
-        effect: "NoSchedule"
