@@ -56,7 +56,7 @@ module "eks" {
       ami_type  = "AL2023_x86_64_STANDARD"
       disk_size = 20
 
-      subnet_ids = var.private_subnet_ids
+      subnet_ids = var.node_subnet_ids
 
       iam_role_additional_policies = {
         AmazonEKSWorkerNodePolicy          = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"

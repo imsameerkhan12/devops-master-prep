@@ -1,14 +1,11 @@
 # CI/CD — Lint, validate, and deploy s3-lister Helm chart
 #
 # Runs on: ARC runner (arc-runner-set) — self-hosted inside EKS
-# Why ARC: has VPC access, kubeconfig via IRSA, demonstrates ARC is working
+# Nodes are in PUBLIC subnets → have internet access → can reach api.github.com to register
 #
 # Flow:
 #   PR  → lint + template (validate only, no deploy)
 #   main → lint + template + helm upgrade (direct deploy to cluster)
-#
-# No CD controller (ArgoCD/Flux) — ARC runner IS the CD.
-# For real apps with Docker builds, add: docker build → ECR push before deploy step.
 
 name: CI
 
@@ -31,7 +28,7 @@ env:
 jobs:
   lint-and-deploy:
     name: Lint + Deploy
-    runs-on: arc-runner-set  # self-hosted ARC runner in EKS
+    runs-on: arc-runner-set  # self-hosted ARC runner in EKS (nodes in public subnets → github.com access)
 
     permissions:
       id-token: write  # OIDC for AWS

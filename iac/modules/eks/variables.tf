@@ -15,6 +15,11 @@ variable "private_subnet_ids" {
   type = list(string)
 }
 
+variable "node_subnet_ids" {
+  type        = list(string)
+  description = "Subnets for node group. Use public subnets for internet access (ARC runners need github.com)."
+}
+
 variable "node_instance_type" {
   type    = string
   default = "t3.medium"

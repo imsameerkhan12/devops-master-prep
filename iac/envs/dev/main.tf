@@ -28,6 +28,7 @@ module "eks" {
 
   vpc_id             = module.vpc.vpc_id
   private_subnet_ids = module.vpc.private_subnets
+  node_subnet_ids    = module.vpc.public_subnets  # public → nodes get internet → ARC can reach github.com
 
   node_instance_type = var.node_instance_type
   node_desired       = var.node_desired
