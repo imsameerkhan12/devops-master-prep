@@ -4,7 +4,7 @@ description: S3 bucket lister — Pod Identity demo app
 type: application
 
 # Chart version — chart ka version (code change pe badhao)
-version: 0.2.3
+version: 0.2.4
 
 # App version — actual app ka version (image tag se match karo)
 appVersion: "1.0.0"
