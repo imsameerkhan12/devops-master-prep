@@ -9,7 +9,7 @@ cluster_name    = "devops-lab-eks"
 cluster_version = "1.33"
 
 node_instance_type = "t3.medium"
-node_desired       = 1
+node_desired       = 2
 
 tags = {
   project     = "devops-lab"

@@ -33,7 +33,7 @@ module "eks" {
   node_instance_type = var.node_instance_type
   node_desired       = var.node_desired
   node_min           = 1
-  node_max           = 1
+  node_max           = 2
 
   tags = var.tags
 
