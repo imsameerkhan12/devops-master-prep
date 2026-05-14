@@ -38,10 +38,10 @@ echo "--> Deleting all object versions from s3://$BUCKET..."
 aws s3api list-object-versions \
   "${PROFILE_ARGS[@]}" \
   --bucket $BUCKET \
-  --query 'Versions[].[Key,VersionId]' \
+  --query 'Versions[?VersionId!=`null`].[Key,VersionId]' \
   --output text 2>/dev/null | \
 while read key version; do
-  [ -z "$key" ] && continue
+  [ -z "$key" ] || [ -z "$version" ] || [ "$version" = "None" ] && continue
   aws s3api delete-object "${PROFILE_ARGS[@]}" --bucket $BUCKET \
     --key "$key" --version-id "$version" > /dev/null
 done
@@ -51,10 +51,10 @@ echo "--> Deleting all delete markers..."
 aws s3api list-object-versions \
   "${PROFILE_ARGS[@]}" \
   --bucket $BUCKET \
-  --query 'DeleteMarkers[].[Key,VersionId]' \
+  --query 'DeleteMarkers[?VersionId!=`null`].[Key,VersionId]' \
   --output text 2>/dev/null | \
 while read key version; do
-  [ -z "$key" ] && continue
+  [ -z "$key" ] || [ -z "$version" ] || [ "$version" = "None" ] && continue
   aws s3api delete-object "${PROFILE_ARGS[@]}" --bucket $BUCKET \
     --key "$key" --version-id "$version" > /dev/null
 done
