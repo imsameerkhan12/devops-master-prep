@@ -214,39 +214,19 @@ jobs:
             sleep 15
           done
 
-          # Capture VPC ID — try multiple methods in order of reliability.
-          # EKS cluster may already be gone from prior partial destroys.
-          # Subnets outlive the cluster and always have the cluster tag.
-          VPC_ID=""
+          # Get VPC ID from tofu state — reliable regardless of what tags exist.
+          # All tag-based lookups fail when EKS removes cluster tags on deletion.
+          # The VPC is always in state until tofu successfully deletes it.
+          VPC_ID=$(tofu state list 2>/dev/null | grep 'aws_vpc\.' | head -1 | \
+            xargs -I{} tofu state show {} 2>/dev/null | \
+            grep -E '^\s+id\s+=' | awk '{print $3}' | tr -d '"')
 
-          # 1. EKS API (works on first run, fails if cluster already deleted)
-          VPC_ID=$(aws eks describe-cluster \
-            --name "$CLUSTER_NAME" \
-            --query 'cluster.resourcesVpcConfig.vpcId' \
-            --output text 2>/dev/null || echo "")
-          [ "$VPC_ID" = "None" ] && VPC_ID=""
-
-          # 2. kubernetes.io/cluster tag on VPC
-          if [ -z "$VPC_ID" ]; then
-            VPC_ID=$(aws ec2 describe-vpcs \
-              --filters "Name=tag:kubernetes.io/cluster/${CLUSTER_NAME},Values=owned" \
-              --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "")
-            [ "$VPC_ID" = "None" ] && VPC_ID=""
-          fi
-
-          # 3. kubernetes.io/cluster tag on subnets (subnets outlive EKS cluster)
-          if [ -z "$VPC_ID" ]; then
-            VPC_ID=$(aws ec2 describe-subnets \
-              --filters "Name=tag:kubernetes.io/cluster/${CLUSTER_NAME},Values=shared" \
-              --query 'Subnets[0].VpcId' --output text 2>/dev/null || echo "")
-            [ "$VPC_ID" = "None" ] && VPC_ID=""
-          fi
-
-          # 4. VPC Name tag (set by the VPC module to cluster name)
-          if [ -z "$VPC_ID" ]; then
-            VPC_ID=$(aws ec2 describe-vpcs \
-              --filters "Name=tag:Name,Values=${CLUSTER_NAME}" \
-              --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "")
+          # Fallback: EKS API (works on clean first run before cluster deleted)
+          if [ -z "$VPC_ID" ] || [ "$VPC_ID" = "None" ]; then
+            VPC_ID=$(aws eks describe-cluster \
+              --name "$CLUSTER_NAME" \
+              --query 'cluster.resourcesVpcConfig.vpcId' \
+              --output text 2>/dev/null || echo "")
             [ "$VPC_ID" = "None" ] && VPC_ID=""
           fi
 
