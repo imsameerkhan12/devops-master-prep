@@ -14,6 +14,12 @@ githubConfigSecret: "arc-github-app-secret"
 minRunners: 0
 maxRunners: 5
 
+# Docker-in-Docker — REQUIRED even without Docker steps in workflow
+# The init-dind-externals init container fixes /home/runner permissions
+# Without dind, runner exits in 2s without picking up jobs
+containerMode:
+  type: "dind"
+
 template:
   spec:
     containers:

@@ -1,86 +1,95 @@
-# CI/CD — Lint, validate, and deploy s3-lister Helm chart
-#
-# Runs on: ARC runner (arc-runner-set) — self-hosted inside EKS
-# Nodes are in PUBLIC subnets → have internet access → can reach api.github.com to register
-#
-# Flow:
-#   PR  → lint + template (validate only, no deploy)
-#   main → lint + template + helm upgrade (direct deploy to cluster)
-
 name: CI
 
 on:
-  pull_request:
-    paths:
-      - "app/s3-lister/**"
-  push:
-    branches: [main]
-    paths:
-      - "app/s3-lister/**"
+pull_request:
+paths:
+- "app/s3-lister/**"
+
+push:
+branches:
+- main
+paths:
+- "app/s3-lister/**"
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+group: ci-${{ github.ref }}
+cancel-in-progress: true
 
 env:
-  AWS_REGION: us-east-1
+AWS_REGION: us-east-1
 
 jobs:
-  lint-and-deploy:
-    name: Lint + Deploy
-    runs-on: arc-runner-set  # self-hosted ARC runner in EKS (nodes in public subnets → github.com access)
+lint-and-deploy:
+name: Lint + Deploy
+runs-on: arc-runner-set
 
-    permissions:
-      id-token: write  # OIDC for AWS
-      contents: read
+```
+permissions:
+  id-token: write
+  contents: read
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
 
-      # ARC runner image is minimal — install AWS CLI (not pre-installed unlike GitHub-hosted runners)
-      - name: Install AWS CLI
-        run: |
-          curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
-          unzip -q awscliv2.zip
-          sudo ./aws/install --update
-          rm -rf aws awscliv2.zip
-          aws --version
+  # ARC/self-hosted runner image is minimal
+  # Install AWS CLI into user space (no sudo required)
+  - name: Install AWS CLI
+    run: |
+      curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
+      unzip -q awscliv2.zip
 
-      - name: Configure AWS Credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+      ./aws/install \
+        --bin-dir $HOME/.local/bin \
+        --install-dir $HOME/.local/aws-cli \
+        --update
 
-      - name: Setup kubectl
-        uses: azure/setup-kubectl@v4
+      echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Setup Helm
-        uses: azure/setup-helm@v4
+      aws --version
 
-      - name: Update kubeconfig
-        run: aws eks update-kubeconfig --name ${{ vars.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+  - name: Configure AWS Credentials (OIDC)
+    uses: aws-actions/configure-aws-credentials@v4
+    with:
+      role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+      aws-region: ${{ env.AWS_REGION }}
 
-      - name: Helm Lint
-        run: helm lint app/s3-lister/chart
+  - name: Setup kubectl
+    uses: azure/setup-kubectl@v4
 
-      - name: Helm Template (render + validate YAML)
-        run: |
-          helm template s3-lister app/s3-lister/chart \
-            --set "image.init=${{ vars.ECR_REGISTRY }}/docker-hub/amazon/aws-cli:latest" \
-            --set "image.nginx=${{ vars.ECR_REGISTRY }}/docker-hub/library/nginx:alpine"
+  - name: Setup Helm
+    uses: azure/setup-helm@v4
 
-      # Deploy only on main — PR runs lint/validate only
-      - name: Deploy s3-lister
-        if: github.ref == 'refs/heads/main'
-        run: |
-          helm upgrade --install s3-lister app/s3-lister/chart \
-            -n default \
-            --set "image.init=${{ vars.ECR_REGISTRY }}/docker-hub/amazon/aws-cli:latest" \
-            --set "image.nginx=${{ vars.ECR_REGISTRY }}/docker-hub/library/nginx:alpine" \
-            --atomic --timeout=3m
+  - name: Update kubeconfig
+    run: |
+      aws eks update-kubeconfig \
+        --name ${{ vars.CLUSTER_NAME }} \
+        --region ${{ env.AWS_REGION }}
 
-      - name: Verify deploy
-        if: github.ref == 'refs/heads/main'
-        run: kubectl rollout status deployment/s3-lister -n default --timeout=2m
+  - name: Helm Lint
+    run: helm lint app/s3-lister/chart
+
+  - name: Helm Template
+    run: |
+      helm template s3-lister app/s3-lister/chart \
+        --set "image.init=${{ vars.ECR_REGISTRY }}/docker-hub/amazon/aws-cli:latest" \
+        --set "image.nginx=${{ vars.ECR_REGISTRY }}/docker-hub/library/nginx:alpine"
+
+  - name: Deploy s3-lister
+    if: github.ref == 'refs/heads/main'
+    run: |
+      helm upgrade --install s3-lister app/s3-lister/chart \
+        -n default \
+        --create-namespace \
+        --set "image.init=${{ vars.ECR_REGISTRY }}/docker-hub/amazon/aws-cli:latest" \
+        --set "image.nginx=${{ vars.ECR_REGISTRY }}/docker-hub/library/nginx:alpine" \
+        --atomic \
+        --timeout=3m
+
+  - name: Verify deploy
+    if: github.ref == 'refs/heads/main'
+    run: |
+      kubectl rollout status deployment/s3-lister \
+        -n default \
+        --timeout=2m
+```
