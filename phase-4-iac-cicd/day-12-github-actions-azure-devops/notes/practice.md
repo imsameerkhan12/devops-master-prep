@@ -791,7 +791,49 @@ Production tip: On real clusters (bigger nodes, multiple nodes, images already c
 
 ### English — Interview Answer
 
-> "Two gotchas during bootstrap: First, ArgoCD's Helm chart `appVersion` already includes the `v` prefix (e.g., `v2.14.1`), so don't prepend another `v` — that produces `vv2.14.1` which doesn't exist on quay.io. Second, on a fresh cluster with a small node, `--atomic --timeout=5m` is too short for ArgoCD's first install. The argocd image (~500MB) plus redis pulling through the docker-hub ECR pull-through cache for the first time can easily take 6-8 minutes. We bumped to `--timeout=10m`. `--atomic` is still the right flag — it rolls back the release cleanly on failure rather than leaving a partially-installed release."
+> "Two gotchas during bootstrap: First, ArgoCD's Helm chart `appVersion` already includes the `v` prefix (e.g., `v2.14.1`), so don't prepend another `v` — that produces `vv2.14.1` which doesn't exist on quay.io. Second, on a fresh cluster with a small node, `--atomic --timeout=5m` is too short for ArgoCD's first install. The argocd image (~500MB) plus redis pulling through the docker-hub ECR pull-through cache for the first time can easily take 6-8 minutes. We eventually replaced ArgoCD entirely — too heavy for a t3.medium dev cluster with 4GB RAM."
+
+---
+
+## 15. ArgoCD Dropped — Push Model via ARC
+
+### Hindi
+
+```
+ArgoCD problem: t3.medium (4GB RAM) pe bahut heavy tha
+  - argocd-application-controller StatefulSet alone ~512MB RAM
+  - Redis separately ~100MB
+  - Traefik + ARC already running → no headroom
+  - Timeouts even at 10 minutes
+
+Decision: ArgoCD hata diya, ARC self-hosted runner se direct deploy
+
+New Flow (Push Model):
+  Git push → GitHub Actions CI workflow triggers
+  ARC runner (inside EKS) spins up as pod
+  Runner runs: helm upgrade --install s3-lister ...
+  Deploy complete
+
+Why this is fine for dev:
+  - ARC runner is already in the cluster (VPC access, IRSA)
+  - helm upgrade is idempotent — same as ArgoCD's sync
+  - PR = lint only, main = deploy
+  - No extra controller to maintain
+
+Production note: In real prod → use Flux CD (not ArgoCD)
+  Flux = lighter than ArgoCD, CNCF graduated, no UI overhead
+  ArgoCD fine on prod with proper node sizing (m5.large+)
+  
+Final platform stack (what actually worked on t3.medium):
+  ✓ Traefik     — ingress + NLB
+  ✓ ARC         — self-hosted runners (scale to zero)
+  ✓ cert-manager — TLS certificates
+  CI/CD:         — GitHub Actions + ARC (no CD controller)
+```
+
+### English — Interview Answer
+
+> "We initially planned to use ArgoCD as our GitOps CD controller. It's industry standard and we understand the pull model. However, on a single t3.medium dev node, ArgoCD's resource footprint (application-controller StatefulSet + redis) was too large alongside Traefik and ARC already running. The right production choice would be ArgoCD on properly-sized nodes (m5.large+) or Flux CD which is significantly lighter. For this dev environment, we use a push model instead — ARC self-hosted runners run `helm upgrade` on every merge to main. Same outcome: git commit → cluster deployment. The CD controller is just ARC itself."
 
 ---
 
@@ -799,18 +841,18 @@ Production tip: On real clusters (bigger nodes, multiple nodes, images already c
 
 | Concept | Key Point |
 |---|---|
-| Push vs Pull | Pull (ArgoCD) = no cluster creds in pipeline, drift auto-heal |
+| Push vs Pull | Pull (ArgoCD/Flux) = no cluster creds in pipeline, drift auto-heal |
 | Separate repos | Infra = high blast radius, App = low — different ownership |
-| GitOps | Git = single source of truth, ArgoCD reconciles continuously |
+| GitOps | Git = single source of truth, controller reconciles continuously |
 | ARC | Self-hosted runners on EKS, ephemeral pods, scale to zero |
 | GitHub App vs PAT | App = org-level, not user-tied, fine-grained perms — always use App |
 | GitHub OIDC | No stored AWS creds — short-lived tokens per workflow run |
 | OIDC Condition | `repo:imsameerkhan12/*:*` — scope to your org only (security) |
-| ArgoCD Application | Watch repo path → deploy to cluster → auto-sync + self-heal |
+| ArgoCD vs Flux | ArgoCD = UI + heavy; Flux = lightweight, CNCF, good for resource-constrained |
 | Destroy order | Traefik uninstall BEFORE tofu destroy — prevents NLB blocking VPC delete |
 | --atomic | Better than --wait — also rolls back Helm release on failure |
 | ECR pull-through | ghcr.io + quay.io require creds → pre-push pattern instead |
 | Ephemeral runners | Each job = fresh pod — clean state, no artifact leakage |
-| appVersion v prefix | ArgoCD chart already has 'v' in appVersion; cert-manager does NOT |
-| First-install timeout | ECR pull-through cold start can take 3-4min extra — use 10m for ArgoCD |
+| ARC scale-to-zero | No pods when idle = "No resources found in arc-runners" is CORRECT |
+| t3.medium limit | 4GB RAM — can run Traefik + ARC + cert-manager, but not ArgoCD too |
 | EKS Access Entry | Modern cluster access (no aws-auth ConfigMap) — IAM role → cluster-admin |
