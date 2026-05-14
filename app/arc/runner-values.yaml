@@ -14,6 +14,11 @@ githubConfigSecret: "arc-github-app-secret"
 minRunners: 0
 maxRunners: 5
 
+# Docker-in-Docker — runner needs Docker daemon even for non-docker workflows
+# Without this, runner exits immediately (code 0, no logs) before registering
+containerMode:
+  type: "dind"
+
 template:
   spec:
     containers:
