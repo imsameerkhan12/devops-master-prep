@@ -4,9 +4,10 @@
 # Install: helm upgrade --install arc-controller oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller
 #          -n arc-systems --create-namespace -f app/arc/controller-values.yaml
 #          --set "image.repository=<ECR_REGISTRY>/ghcr-io/actions/gha-runner-scale-set-controller"
-#          --version 0.10.1
+#          --version 0.14.0
 
 image:
   # Override on deploy: --set image.repository=<ECR_REGISTRY>/ghcr-io/actions/gha-runner-scale-set-controller
+  # tag overridden in bootstrap.yaml via --set image.tag=$ARC_CHART_VERSION to match ECR push tag
   repository: "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/ghcr-io/actions/gha-runner-scale-set-controller"
   pullPolicy: IfNotPresent

@@ -9,6 +9,10 @@
 githubConfigUrl: "https://github.com/imsameerkhan12/devops-master-prep"
 githubConfigSecret: "arc-github-app-secret"
 
+# runnerScaleSetName MUST match runs-on: label in ci.yaml
+# Defaults to Helm release name — keeping it explicit avoids surprises
+runnerScaleSetName: "arc-runner-set"
+
 # Scale to zero when idle — no cost when no jobs are queued
 minRunners: 0
 maxRunners: 5
@@ -26,8 +30,18 @@ template:
         # immediately exiting if GitHub's floor has moved past that version.
         image: "ghcr.io/actions/actions-runner:latest"
 
-        # Resource limits are required on t3.medium (2vCPU / 4GB).
+        # IfNotPresent: image pulled once and cached on the node.
+        # Safe with latest because:
+        #  - Nodes are in public subnets (can always pull fresh if evicted)
+        #  - Saves 20-30s per job vs Always (which re-pulls on every runner pod)
+        #  - latest tag is only used to register — GitHub controls the version
+        #    enforcement, not the image tag on our side
+        imagePullPolicy: IfNotPresent
+
+        # Resource limits are REQUIRED on t3.medium (2vCPU / 4GB total).
         # Without limits the runner can be OOMKilled before it picks up a job.
+        # Budget: runner gets up to 1.5CPU / 2GB, leaving headroom for
+        # system pods (kube-proxy, aws-node, coredns) on the same node.
         resources:
           requests:
             cpu: "500m"

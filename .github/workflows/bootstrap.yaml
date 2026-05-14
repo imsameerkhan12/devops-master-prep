@@ -114,7 +114,8 @@ jobs:
             -n arc-systems --create-namespace \
             -f app/arc/controller-values.yaml \
             --set "image.repository=${{ vars.ECR_REGISTRY }}/ghcr-io/actions/gha-runner-scale-set-controller" \
-            --atomic --timeout=3m
+            --set "image.tag=${{ env.ARC_CHART_VERSION }}" \
+            --atomic --timeout=5m
 
       # ── ARC GitHub App Secret ─────────────────────────────────────────────
       # Secret created imperatively — private key must NOT be in git
@@ -132,6 +133,8 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
 
       # ── ARC RunnerSet ─────────────────────────────────────────────────────
+      # --atomic waits for the listener pod to be Running, which requires it to
+      # authenticate with GitHub API. 5m gives enough headroom for API latency.
       - name: Install ARC RunnerSet
         run: |
           helm upgrade --install arc-runner-set \
@@ -139,7 +142,21 @@ jobs:
             --version ${{ env.ARC_CHART_VERSION }} \
             -n arc-runners \
             -f app/arc/runner-values.yaml \
-            --atomic --timeout=3m
+            --atomic --timeout=5m
+
+      # Verify listener pod is healthy — if this shows 0/1 Ready, check GitHub App secret
+      - name: Verify ARC RunnerSet
+        run: |
+          echo "=== AutoscalingRunnerSet status ==="
+          kubectl get autoscalingrunnerset -n arc-runners
+          echo ""
+          echo "=== Listener pod status ==="
+          kubectl get pods -n arc-runners
+          echo ""
+          echo "=== Controller logs (last 20 lines) ==="
+          kubectl logs -n arc-systems \
+            -l app.kubernetes.io/name=gha-runner-scale-set-controller \
+            --tail=20 || true
 
       # ── cert-manager ─────────────────────────────────────────────────────
       - name: Install cert-manager
