@@ -27,10 +27,17 @@ aws iam create-access-key --user-name github-actions-ci --profile sameer
 1. github.com → Settings → Developer settings → GitHub Apps → New GitHub App
 2. Name: `devops-lab-arc` | Homepage: `https://github.com/imsameerkhan12`
 3. **Uncheck Webhook Active**
-4. Permissions → Actions: Read & Write, Metadata: Read-only
+4. Permissions:
+   - **Actions: Read & Write**
+   - **Administration: Read & Write** ← REQUIRED for runner registration (easy to miss)
+   - **Metadata: Read-only** (mandatory, auto-selected)
 5. Click Create → note **App ID** (3710409)
 6. Generate private key → downloads `.pem`
-7. Install App → note **Installation ID** from URL (132252489)
+7. Install App on the repo → note **Installation ID** from URL (132252489)
+
+> **githubConfigUrl must be REPO-level for personal accounts:**
+> `https://github.com/imsameerkhan12/devops-master-prep` — NOT user-level URL.
+> Org accounts can use org-level URL. Personal accounts: repo-level only.
 
 ### Step 3 — Set GitHub Secrets + Variables (via gh CLI or UI)
 
@@ -103,13 +110,13 @@ Or: **GitHub → Actions → Bootstrap Platform → Run workflow → Run**
 
 Takes ~8-10 min. Installs in order:
 1. Gateway API CRDs v1.5.1
-2. Traefik (NLB + Gateway API, via ECR pull-through)
-3. ARC Controller (arc-systems namespace)
-4. ARC GitHub App Secret (arc-runners namespace)
-5. ARC RunnerSet (scale 0→5, ephemeral pods)
-6. ArgoCD (GitOps controller, argocd namespace)
-7. cert-manager (TLS controller, cert-manager namespace)
-8. ArgoCD Application → s3-lister auto-deploys
+2. Traefik (NLB + Gateway API, via ECR pull-through for docker.io images)
+3. ARC Controller (arc-systems namespace, image pre-pushed to ECR by bootstrap)
+4. ARC GitHub App Secret (arc-runners namespace, from GitHub Secret)
+5. ARC RunnerSet (scale 0→5, ephemeral pods, pulls runner image from ghcr.io directly)
+6. cert-manager (TLS controller, cert-manager namespace)
+
+> ArgoCD dropped — too heavy for t3.medium (4GB RAM). CI/CD via ARC push model instead.
 
 ### Step 7 — Verify
 
@@ -117,20 +124,22 @@ Takes ~8-10 min. Installs in order:
 # Traefik NLB URL
 kubectl get svc -n traefik traefik -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
 
-# ARC runners registered with GitHub
-kubectl get pods -n arc-runners
+# ARC listener connected (should be Running)
+kubectl get pods -n arc-systems
 
-# ArgoCD app status
-kubectl get application -n argocd
+# ARC scale-to-zero — no pods when idle is CORRECT
+kubectl get pods -n arc-runners   # "No resources found" = healthy
 
 # cert-manager running
 kubectl get pods -n cert-manager
 
-# s3-lister deployed
-kubectl get pods -n default
+# Trigger CI to test ARC runner:
+git commit --allow-empty -m "test ARC runner" -- app/s3-lister/chart/Chart.yaml
+git push
+gh run list --repo imsameerkhan12/devops-master-prep --workflow CI
 ```
 
-**Verify ARC works:** push any change to `app/s3-lister/**` → CI workflow triggers → check it runs on ARC runner.
+**Verify ARC works:** push any change to `app/s3-lister/**` → CI workflow triggers → ARC spawns runner pod → helm deploy runs.
 
 ---
 
@@ -139,10 +148,16 @@ kubectl get pods -n default
 | Problem | Cause | Fix |
 |---|---|---|
 | bootstrap fails with OIDC error | AWS_ROLE_ARN variable not set | Set it from infra-apply logs |
-| ARC runners stay Pending | GitHub App secret wrong | Re-run bootstrap after checking PEM content |
-| ArgoCD images stuck in Pending | quay.io pull-through not seeded | Wait — first pull takes 2-3 min to import via ECR |
-| cert-manager webhook CrashLoopBackOff | quay.io image not cached yet | Same — wait 3 min |
+| ARC listener running but no runners in GitHub Settings | githubConfigUrl is user-level, not repo-level | Change to `https://github.com/USER/REPO` in runner-values.yaml, re-run bootstrap |
+| ARC listener running but no runners in GitHub Settings | GitHub App missing Administration: R+W | Update App permissions → accept in installation → re-run bootstrap |
+| ARC runner pod: ErrImagePull 403 from ECR | Kubelet ECR credential cache poisoned at boot | Runner uses ghcr.io direct (already fixed); in prod: replace node |
+| ARC EphemeralRunner: "Pod has failed to start more than 5 times" | IP exhaustion on t3.medium (17-pod limit) | Prefix delegation enabled in IaC; ensure `tofu apply` ran after that commit |
+| ARC runner exits code 0 in <1 second, empty logs | JIT token already consumed by previous failed attempt | Delete stale EphemeralRunner: `kubectl delete ephemeralrunner -n arc-runners --all` |
+| Node group recreate → ECR 403 / missing policies | Community module iam_role_additional_policies lost on recreation | Explicit `aws_iam_role_policy_attachment` resources in dev/main.tf (already fixed) |
+| `Ec2SubnetInvalidConfiguration` on node group create | Public subnets missing map_public_ip_on_launch=true | Set in VPC module (already fixed in IaC) |
+| cert-manager webhook CrashLoopBackOff | quay.io images not pre-pushed to ECR yet | Re-run bootstrap — it pre-pushes images before helm install |
 | NLB never gets IP | Traefik image.registry not set | Check bootstrap logs for --set image.registry |
+| destroy workflow 403 on S3 state bucket | OIDC role missing S3 permissions | destroy.yaml now uses static creds (already fixed); S3 perms also added to OIDC role in IaC |
 
 ---
 
@@ -217,9 +232,9 @@ gh workflow run infra-apply.yaml --repo imsameerkhan12/devops-master-prep
 | Workflow | Trigger | Auth | What it does |
 |---|---|---|---|
 | `infra-apply.yaml` | push to `iac/**` or manual | Static IAM creds | Creates state bucket + Secrets Manager secret + tofu apply |
-| `bootstrap.yaml` | manual only | OIDC | Installs Traefik + ARC + ArgoCD + cert-manager |
-| `destroy.yaml` | manual only | OIDC | Helm uninstalls + tofu destroy + optional state cleanup |
-| `ci.yaml` | push to `app/s3-lister/**` or PR | ARC runner | Helm lint + validate + ArgoCD refresh |
+| `bootstrap.yaml` | manual only | OIDC | Pre-push images to ECR + install Traefik + ARC + cert-manager |
+| `destroy.yaml` | manual only | Static IAM creds | Helm uninstalls + tofu destroy + optional state cleanup |
+| `ci.yaml` | push to `app/s3-lister/**` or PR | ARC runner (self-hosted) | Helm lint + validate; on main: helm upgrade deploy |
 
 ---
 
