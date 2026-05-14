@@ -86,7 +86,7 @@ jobs:
 
           # ArgoCD — get image tag from chart appVersion
           helm repo add argo https://argoproj.github.io/argo-helm --force-update
-          ARGOCD_TAG="v$(helm show chart argo/argo-cd --version ${{ env.ARGOCD_CHART_VERSION }} | grep ^appVersion | awk '{print $2}' | tr -d '"')"
+          ARGOCD_TAG="$(helm show chart argo/argo-cd --version ${{ env.ARGOCD_CHART_VERSION }} | grep ^appVersion | awk '{print $2}' | tr -d '"')"
           echo "ArgoCD image tag: $ARGOCD_TAG"
           echo "ARGOCD_TAG=${ARGOCD_TAG}" >> $GITHUB_ENV
           push_image \
