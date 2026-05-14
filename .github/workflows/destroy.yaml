@@ -126,12 +126,9 @@ jobs:
       # ── OpenTofu Destroy ──────────────────────────────────────────────────
       - name: OpenTofu Destroy
         working-directory: iac/envs/dev
-        env:
-          # Override profile — use OIDC credentials instead of named profile
-          TF_VAR_aws_profile: ""
         run: |
           tofu init
-          tofu destroy -auto-approve --var-file=dev.tfvars
+          tofu destroy -auto-approve --var-file=dev.tfvars --var='aws_profile='
 
       # ── Optional: delete state bucket ─────────────────────────────────────
       # Only runs if destroy_state_bucket=true in workflow inputs

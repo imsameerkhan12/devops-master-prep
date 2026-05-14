@@ -26,7 +26,6 @@ concurrency:
 
 env:
   AWS_REGION: us-east-1
-  TF_VAR_aws_profile: ""  # empty = use env credentials (not named profile)
 
 jobs:
   apply:
@@ -105,7 +104,7 @@ jobs:
 
       - name: OpenTofu Apply
         working-directory: iac/envs/dev
-        run: tofu apply -auto-approve --var-file=dev.tfvars
+        run: tofu apply -auto-approve --var-file=dev.tfvars --var='aws_profile='
 
       # ── Print outputs ─────────────────────────────────────────────────────
       # Copy these values into GitHub Variables after this workflow completes
