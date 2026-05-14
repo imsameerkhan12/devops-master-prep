@@ -14,11 +14,6 @@ githubConfigSecret: "arc-github-app-secret"
 minRunners: 0
 maxRunners: 5
 
-# Docker-in-Docker — runner needs Docker daemon even for non-docker workflows
-# Without this, runner exits immediately (code 0, no logs) before registering
-containerMode:
-  type: "dind"
-
 template:
   spec:
     containers:
@@ -26,24 +21,3 @@ template:
         # Nodes in public subnets — pull directly from ghcr.io (no ECR needed)
         # Pinned: GitHub enforces minimum v2.329.0 from March 2026 (latest = 2.334.0)
         image: "ghcr.io/actions/actions-runner:2.334.0"
-        # DEBUG: wrap entrypoint to capture exit reason + keep pod alive 5 min after exit
-        command: ["/bin/bash", "-c"]
-        args:
-          - |
-            echo "=== DEBUG START $(date) ==="
-            echo "USER: $(id)"
-            echo "PWD: $(pwd)"
-            echo "ENV ACTIONS_*:"
-            env | grep -i actions || echo "NO ACTIONS env vars"
-            echo "ENV GITHUB_*:"
-            env | grep -i github || echo "NO GITHUB env vars"
-            echo "DIRECTORY /home/runner:"
-            ls -la /home/runner/ 2>&1
-            echo "=== RUNNING /home/runner/run.sh ==="
-            /home/runner/run.sh
-            EXIT_CODE=$?
-            echo "=== EXIT CODE: $EXIT_CODE ==="
-            echo "Checking .runner config after exit:"
-            cat /home/runner/.runner 2>&1 || echo "NO .runner FILE"
-            echo "=== KEEPING POD ALIVE 5 MIN FOR DEBUG ==="
-            sleep 300
