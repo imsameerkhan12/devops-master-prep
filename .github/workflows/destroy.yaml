@@ -156,31 +156,49 @@ jobs:
             exit 0
           fi
 
-          echo "VPC: $VPC_ID — cleaning orphaned ENIs..."
+          echo "VPC: $VPC_ID — force-cleaning ALL ENIs..."
 
-          # Delete available (detached) ENIs
+          # Get ALL ENIs in VPC with their status and attachment info
           aws ec2 describe-network-interfaces \
-            --filters "Name=vpc-id,Values=$VPC_ID" "Name=status,Values=available" \
-            --query 'NetworkInterfaces[].NetworkInterfaceId' \
-            --output text | tr '\t' '\n' | while read eni; do
+            --filters "Name=vpc-id,Values=$VPC_ID" \
+            --query 'NetworkInterfaces[].[NetworkInterfaceId,Status,Attachment.AttachmentId]' \
+            --output text | while read eni status attachment; do
             [ -z "$eni" ] && continue
-            echo "  Deleting available ENI: $eni"
-            aws ec2 delete-network-interface --network-interface-id "$eni" || true
+            if [ "$status" = "in-use" ] && [ -n "$attachment" ] && [ "$attachment" != "None" ]; then
+              echo "  Force-detaching $eni (attachment: $attachment)"
+              aws ec2 detach-network-interface --attachment-id "$attachment" --force 2>/dev/null || true
+              sleep 5
+            fi
+            echo "  Deleting $eni"
+            aws ec2 delete-network-interface --network-interface-id "$eni" 2>/dev/null || true
           done
 
-          # Force-detach and delete in-use ENIs not marked DeleteOnTermination
-          aws ec2 describe-network-interfaces \
-            --filters "Name=vpc-id,Values=$VPC_ID" "Name=status,Values=in-use" \
-            --query 'NetworkInterfaces[?Attachment.DeleteOnTermination==`false`].[NetworkInterfaceId,Attachment.AttachmentId]' \
-            --output text | while read eni attachment; do
-            [ -z "$eni" ] && continue
-            echo "  Force-detaching ENI: $eni"
-            aws ec2 detach-network-interface --attachment-id "$attachment" --force || true
-            sleep 5
-            aws ec2 delete-network-interface --network-interface-id "$eni" || true
+          # Revoke all SG rules that reference other SGs — breaks dependency chains
+          echo "Revoking cross-SG rules..."
+          aws ec2 describe-security-groups \
+            --filters "Name=vpc-id,Values=$VPC_ID" \
+            --query 'SecurityGroups[].GroupId' \
+            --output text | tr '\t' '\n' | while read sg; do
+            [ -z "$sg" ] && continue
+            # Revoke ingress rules referencing other SGs
+            INGRESS=$(aws ec2 describe-security-group-rules \
+              --filters "Name=group-id,Values=$sg" \
+              --query 'SecurityGroupRules[?!IsEgress && ReferencedGroupInfo!=null].SecurityGroupRuleId' \
+              --output text 2>/dev/null)
+            [ -n "$INGRESS" ] && [ "$INGRESS" != "None" ] && \
+              aws ec2 revoke-security-group-ingress --group-id "$sg" \
+                --security-group-rule-ids $INGRESS 2>/dev/null || true
+            # Revoke egress rules referencing other SGs
+            EGRESS=$(aws ec2 describe-security-group-rules \
+              --filters "Name=group-id,Values=$sg" \
+              --query 'SecurityGroupRules[?IsEgress && ReferencedGroupInfo!=null].SecurityGroupRuleId' \
+              --output text 2>/dev/null)
+            [ -n "$EGRESS" ] && [ "$EGRESS" != "None" ] && \
+              aws ec2 revoke-security-group-egress --group-id "$sg" \
+                --security-group-rule-ids $EGRESS 2>/dev/null || true
           done
 
-          echo "ENI cleanup done."
+          echo "ENI + SG rule cleanup done."
 
       # ── OpenTofu Destroy ──────────────────────────────────────────────────
       - name: OpenTofu Destroy
