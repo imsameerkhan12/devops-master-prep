@@ -4,7 +4,7 @@
 # Install: helm upgrade --install arc-runner-set oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
 #          -n arc-runners --create-namespace -f app/arc/runner-values.yaml
 #          --set "template.spec.containers[0].image=<ECR_REGISTRY>/ghcr-io/actions/actions-runner:latest"
-#          --version 0.10.1
+#          --version 0.13.0
 
 # GitHub App auth — secret created by bootstrap workflow
 githubConfigUrl: "https://github.com/imsameerkhan12/devops-master-prep"
@@ -19,4 +19,5 @@ template:
     containers:
       - name: runner
         # Nodes in public subnets — pull directly from ghcr.io (no ECR needed)
-        image: "ghcr.io/actions/actions-runner:latest"
+        # Pinned: GitHub enforces minimum v2.329.0 from March 2026 (latest = 2.334.0)
+        image: "ghcr.io/actions/actions-runner:2.334.0"

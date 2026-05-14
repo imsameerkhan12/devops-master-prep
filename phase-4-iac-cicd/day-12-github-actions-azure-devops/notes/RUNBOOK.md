@@ -111,9 +111,9 @@ Or: **GitHub → Actions → Bootstrap Platform → Run workflow → Run**
 Takes ~8-10 min. Installs in order:
 1. Gateway API CRDs v1.5.1
 2. Traefik (NLB + Gateway API, via ECR pull-through for docker.io images)
-3. ARC Controller (arc-systems namespace, image pre-pushed to ECR by bootstrap)
+3. ARC Controller v0.13.0 (arc-systems namespace, image pre-pushed to ECR by bootstrap)
 4. ARC GitHub App Secret (arc-runners namespace, from GitHub Secret)
-5. ARC RunnerSet (scale 0→5, ephemeral pods, pulls runner image from ghcr.io directly)
+5. ARC RunnerSet v0.13.0 (scale 0→5, ephemeral pods, runner image ghcr.io/actions/actions-runner:2.334.0)
 6. cert-manager (TLS controller, cert-manager namespace)
 
 > ArgoCD dropped — too heavy for t3.medium (4GB RAM). CI/CD via ARC push model instead.
@@ -152,7 +152,7 @@ gh run list --repo imsameerkhan12/devops-master-prep --workflow CI
 | ARC listener running but no runners in GitHub Settings | GitHub App missing Administration: R+W | Update App permissions → accept in installation → re-run bootstrap |
 | ARC runner pod: ErrImagePull 403 from ECR | Kubelet ECR credential cache poisoned at boot | Runner uses ghcr.io direct (already fixed); in prod: replace node |
 | ARC EphemeralRunner: "Pod has failed to start more than 5 times" | IP exhaustion on t3.medium (17-pod limit) | Prefix delegation enabled in IaC; ensure `tofu apply` ran after that commit |
-| ARC runner exits code 0 in <1 second, empty logs | JIT token already consumed by previous failed attempt | Delete stale EphemeralRunner: `kubectl delete ephemeralrunner -n arc-runners --all` |
+| ARC runner exits code 0 in <1 second, empty logs | **ARC 0.10.1 bug**: JIT token consumed by failed pod, retries get dead token | **Fixed**: upgrade to ARC ≥0.12.0 (0.13.0 in bootstrap.yaml). Also delete stale runners: `kubectl delete ephemeralrunner -n arc-runners --all` |
 | Node group recreate → ECR 403 / missing policies | Community module iam_role_additional_policies lost on recreation | Explicit `aws_iam_role_policy_attachment` resources in dev/main.tf (already fixed) |
 | `Ec2SubnetInvalidConfiguration` on node group create | Public subnets missing map_public_ip_on_launch=true | Set in VPC module (already fixed in IaC) |
 | cert-manager webhook CrashLoopBackOff | quay.io images not pre-pushed to ECR yet | Re-run bootstrap — it pre-pushes images before helm install |
