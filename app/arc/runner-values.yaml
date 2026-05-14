@@ -3,7 +3,6 @@
 # Namespace: arc-runners
 # Install: helm upgrade --install arc-runner-set oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
 #          -n arc-runners --create-namespace -f app/arc/runner-values.yaml
-#          --set "template.spec.containers[0].image=<ECR_REGISTRY>/ghcr-io/actions/actions-runner:latest"
 #          --version 0.14.0
 
 # GitHub App auth — secret created by bootstrap workflow
@@ -14,16 +13,55 @@ githubConfigSecret: "arc-github-app-secret"
 minRunners: 0
 maxRunners: 5
 
-# Docker-in-Docker — REQUIRED even without Docker steps in workflow
-# The init-dind-externals init container fixes /home/runner permissions
-# Without dind, runner exits in 2s without picking up jobs
+# Docker-in-Docker — required for container steps and general runner stability
+# dind injects: init-dind-externals init container + docker daemon sidecar
+# init-dind-externals copies docker binaries + waits for certs — fixes the
+# race condition where runner starts before docker daemon is ready
 containerMode:
   type: "dind"
 
+  # Give the dind daemon enough privilege + resources so it starts before
+  # the runner container begins registration
+  dindContainerSecurityContext:
+    privileged: true
+
+  # Sidecar (docker daemon) resource limits — prevents it from starving the
+  # runner on t3.medium (2vCPU / 4GB). Without this the daemon can be OOMKilled
+  # mid-job causing the runner to exit immediately.
+  dindContainerResources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+
 template:
   spec:
+    # Runner container
     containers:
       - name: runner
-        # Nodes in public subnets — pull directly from ghcr.io (no ECR needed)
-        # Pinned: GitHub enforces minimum v2.329.0 from March 2026 (latest = 2.334.0)
-        image: "ghcr.io/actions/actions-runner:2.334.0"
+        # Use latest to avoid GitHub's enforced minimum-version rejections.
+        # GitHub enforces a floor version server-side — if the pinned image
+        # is below that floor, the runner registers then exits in ~2s.
+        # "latest" always satisfies the floor.
+        # Nodes are in public subnets so ghcr.io is reachable directly.
+        image: "ghcr.io/actions/actions-runner:latest"
+
+        # Resource limits are REQUIRED on t3.medium.
+        # Without limits: runner + dind daemon together can exceed 4GB →
+        # OOMKill → pod terminates immediately (looks like "not picking up jobs")
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "1500m"
+            memory: "2Gi"
+
+    # Prevent runner from being evicted mid-job on a memory-pressured node
+    # PodDisruptionBudget is handled by ARC controller separately
+    tolerations:
+      - key: "node.kubernetes.io/memory-pressure"
+        operator: "Exists"
+        effect: "NoSchedule"
