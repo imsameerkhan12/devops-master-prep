@@ -587,6 +587,214 @@ Variables (non-sensitive):
 
 ---
 
+---
+
+## 12. ECR Pull-Through Cache — ghcr.io + quay.io Gotcha
+
+### Hindi
+
+```
+Assumption tha: ghcr.io aur quay.io public registries hain → no auth needed
+Reality: AWS ECR pull-through cache ke liye DONO registries ko credentials chahiye
+         chahe image public ho tab bhi
+
+Error mila:
+  UnsupportedUpstreamRegistryException:
+  The specified upstream registry requires authentication.
+  Specify a valid Secrets Manager ARN containing the upstream registry credentials.
+
+Registries + auth requirement:
+  docker.io  → optional (rate limiting without auth, we already have creds)
+  ghcr.io    → REQUIRED (GitHub PAT with read:packages scope)
+  quay.io    → REQUIRED (Quay.io account credentials)
+  public.ecr.aws → no auth (ECR Public)
+```
+
+### Solution — Pre-push from GitHub-hosted runner
+
+```
+Problem:
+  EKS nodes (private subnet, no NAT) → can't reach ghcr.io/quay.io directly
+  ECR pull-through cache → needs credentials we don't want to set up
+
+Solution:
+  GitHub-hosted runner (ubuntu-latest) → HAS internet access
+  Runner pulls from public registry → pushes to ECR → nodes pull from ECR
+
+Flow:
+  bootstrap workflow (ubuntu-latest, internet):
+    docker pull ghcr.io/actions/actions-runner:latest
+    docker tag  ghcr.io/...  ECR_REGISTRY/ghcr-io/actions/actions-runner:latest
+    docker push ECR_REGISTRY/ghcr-io/actions/actions-runner:latest
+          ↓
+    (nodes pull from ECR via VPC endpoint — no internet needed)
+```
+
+### Why this is better than pull-through cache for these registries:
+
+```
+Pull-through cache:
+  ✅ Auto-imports on first pull (no pre-seeding)
+  ❌ Needs Secrets Manager credentials for ghcr.io + quay.io
+  ❌ Two new accounts (GitHub PAT + Quay.io)
+  ❌ More IaC complexity (credential_arn in resource)
+
+Pre-push from runner:
+  ✅ Zero new accounts/credentials
+  ✅ Explicit control over what's in ECR (no surprise imports)
+  ✅ Simpler IaC (plain ECR repos, no pull-through cache rules)
+  ✅ Works because bootstrap runner has internet
+  ❌ Bootstrap takes longer (pull + push each image)
+  ❌ Must update versions manually when upgrading
+```
+
+### IaC changes made:
+
+```hcl
+# REMOVED — both require credentials in AWS ECR pull-through
+# resource "aws_ecr_pull_through_cache_rule" "ghcr" { ... }
+# resource "aws_ecr_pull_through_cache_rule" "quay" { ... }
+
+# KEPT as plain ECR repos — bootstrap workflow pushes images here
+resource "aws_ecr_repository" "ghcr_actions_runner" {
+  name         = "ghcr-io/actions/actions-runner"
+  force_delete = true
+  # No depends_on = pull-through rule (rule doesn't exist anymore)
+}
+
+# IAM policy — only docker-hub/* needs BatchImportUpstreamImage
+# (ghcr-io/*, quay-io/* removed — those are now plain repos)
+Resource = "arn:aws:ecr:region:account:repository/docker-hub/*"
+```
+
+### Bootstrap workflow — pre-push step:
+
+```bash
+# ECR login — runner authenticates with AWS via OIDC
+aws ecr get-login-password --region us-east-1 | \
+  docker login --username AWS --password-stdin "$ECR"
+
+push_image() {
+  docker pull "$1" && docker tag "$1" "$2" && docker push "$2"
+}
+
+# ARC — controller tag matches chart version
+push_image "ghcr.io/actions/actions-runner:latest" \
+           "${ECR}/ghcr-io/actions/actions-runner:latest"
+
+# ArgoCD — get tag from chart appVersion (don't hardcode)
+ARGOCD_TAG="v$(helm show chart argo/argo-cd --version 7.8.0 \
+  | grep ^appVersion | awk '{print $2}' | tr -d '"')"
+push_image "quay.io/argoproj/argocd:${ARGOCD_TAG}" \
+           "${ECR}/quay-io/argoproj/argocd:${ARGOCD_TAG}"
+
+# cert-manager — image version == chart version
+CM_TAG="v1.17.0"
+for img in cert-manager-controller cert-manager-cainjector \
+           cert-manager-webhook cert-manager-startupapicheck; do
+  push_image "quay.io/jetstack/${img}:${CM_TAG}" \
+             "${ECR}/quay-io/jetstack/${img}:${CM_TAG}"
+done
+```
+
+### Key trick — dynamic ArgoCD tag:
+
+```bash
+# Never hardcode image tags — get from chart metadata
+ARGOCD_TAG="v$(helm show chart argo/argo-cd --version 7.8.0 \
+  | grep ^appVersion | awk '{print $2}' | tr -d '"')"
+
+# Then wire into helm install:
+--set "global.image.tag=${ARGOCD_TAG}"
+# This ensures pushed image tag == what chart expects
+```
+
+### English — Interview Answer
+
+> "We hit an AWS limitation — ECR pull-through cache requires credentials for ghcr.io and quay.io even for public images. Instead of creating extra accounts and secrets, we use the bootstrap workflow's GitHub-hosted runner which has internet access. It pulls images from ghcr.io and quay.io, then pushes them to ECR. EKS nodes in private subnets pull from ECR via VPC endpoint — they never need internet. The image tag is dynamically fetched from the Helm chart's appVersion so we never hardcode or mismatch versions."
+
+---
+
+## 13. infra-apply Workflow — Variable Precedence Bug + Fix
+
+### Hindi
+
+```
+Bug: TF_VAR_aws_profile="" env var set kiya tha
+     Expect tha: dev.tfvars ka aws_profile="sameer" override ho jaayega
+     Reality: -var-file BEATS TF_VAR_* env vars
+
+OpenTofu variable precedence (low → high):
+  1. default values in variable block    (lowest)
+  2. TF_VAR_* environment variables
+  3. terraform.tfvars / *.auto.tfvars
+  4. -var-file flags
+  5. -var flags                          (highest)
+
+Fix: -var flag use karo (highest priority)
+  tofu apply --var-file=dev.tfvars --var='aws_profile='
+  
+  -var-file=dev.tfvars sets  aws_profile="sameer"
+  --var='aws_profile='  overrides to empty string
+  Provider: profile = var.aws_profile != "" ? var.aws_profile : null
+            → null → use default credential chain (OIDC in GitHub Actions)
+```
+
+### English — Interview Answer
+
+> "In OpenTofu, `-var-file` has higher precedence than `TF_VAR_*` environment variables. So setting `TF_VAR_aws_profile=''` doesn't override what's in dev.tfvars. The fix is to add `--var='aws_profile='` explicitly — `-var` flags are the highest precedence and beat `-var-file`. Combined with the provider conditional `profile = var.aws_profile != "" ? var.aws_profile : null`, an empty string means 'use the default credential chain' which in GitHub Actions is the OIDC-assumed role."
+
+---
+
+## 14. Bootstrap Errors — Run 3 + 4 Fixes
+
+### Hindi
+
+```
+Run #3 fail: bootstrap.yaml
+Error: quay.io/argoproj/argocd:vv2.14.1 — manifest unknown
+
+Root Cause: Double 'v' prefix bug
+  helm show chart appVersion → "v2.14.1"  (already has v)
+  Code: ARGOCD_TAG="v$(... | tr -d '"')"  → "vv2.14.1"  ← WRONG
+
+Fix: Remove extra 'v' prefix
+  ARGOCD_TAG="$(... | tr -d '"')"  → "v2.14.1"  ← CORRECT
+  
+Lesson: Check what helm show chart appVersion actually returns before assuming format.
+  argocd chart: appVersion includes 'v' prefix
+  cert-manager chart: appVersion does NOT include 'v' (so CM_TAG="v${{ ... }}" is right)
+
+---
+
+Run #4 fail: bootstrap.yaml
+Error: StatefulSet/argocd/argocd-application-controller not ready (timeout)
+  status: InProgress (pod was starting, just slow)
+
+Root Cause: --atomic --timeout=5m too short for first install on t3.medium (1 node)
+  
+  Why slow on first install:
+  1. ArgoCD image (~500MB) → pulled from ECR via VPC endpoint (first time)
+  2. Redis image (7-alpine) → docker-hub pull-through cache
+     First pull = ECR sees no image → fetch from docker.io → cache in ECR → node downloads
+     This can take 3-4 min on cold start
+  3. All this on 1 t3.medium (2 vCPU, 4GB) with Traefik + ARC already running
+  
+  --atomic rolls back the release on timeout → clean state but shows as failure
+
+Fix: Increase timeout
+  --atomic --timeout=10m  ← gives enough headroom for first-pull image caching
+
+Production tip: On real clusters (bigger nodes, multiple nodes, images already cached)
+  5m is usually fine. Only a problem on fresh install on small dev nodes.
+```
+
+### English — Interview Answer
+
+> "Two gotchas during bootstrap: First, ArgoCD's Helm chart `appVersion` already includes the `v` prefix (e.g., `v2.14.1`), so don't prepend another `v` — that produces `vv2.14.1` which doesn't exist on quay.io. Second, on a fresh cluster with a small node, `--atomic --timeout=5m` is too short for ArgoCD's first install. The argocd image (~500MB) plus redis pulling through the docker-hub ECR pull-through cache for the first time can easily take 6-8 minutes. We bumped to `--timeout=10m`. `--atomic` is still the right flag — it rolls back the release cleanly on failure rather than leaving a partially-installed release."
+
+---
+
 ## Concept Summary
 
 | Concept | Key Point |
@@ -601,6 +809,8 @@ Variables (non-sensitive):
 | ArgoCD Application | Watch repo path → deploy to cluster → auto-sync + self-heal |
 | Destroy order | Traefik uninstall BEFORE tofu destroy — prevents NLB blocking VPC delete |
 | --atomic | Better than --wait — also rolls back Helm release on failure |
-| ECR pull-through | ghcr.io + quay.io added — covers ARC, ArgoCD, cert-manager images |
+| ECR pull-through | ghcr.io + quay.io require creds → pre-push pattern instead |
 | Ephemeral runners | Each job = fresh pod — clean state, no artifact leakage |
+| appVersion v prefix | ArgoCD chart already has 'v' in appVersion; cert-manager does NOT |
+| First-install timeout | ECR pull-through cold start can take 3-4min extra — use 10m for ArgoCD |
 | EKS Access Entry | Modern cluster access (no aws-auth ConfigMap) — IAM role → cluster-admin |
