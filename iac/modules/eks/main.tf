@@ -26,6 +26,14 @@ module "eks" {
   cluster_addons = {
     vpc-cni = {
       most_recent = true
+      # Prefix delegation: each ENI gets a /28 prefix (16 IPs) instead of individual IPs
+      # t3.medium without prefix: 17 max pods. With prefix: 110 max pods.
+      configuration_values = jsonencode({
+        env = {
+          ENABLE_PREFIX_DELEGATION = "true"
+          WARM_PREFIX_TARGET       = "1"
+        }
+      })
     }
     kube-proxy = {
       most_recent = true
