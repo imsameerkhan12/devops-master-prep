@@ -32,23 +32,19 @@ steps:
   - name: Checkout
     uses: actions/checkout@v4
 
-  # ARC/self-hosted runner image is minimal
-  # Install AWS CLI into user space (no sudo required)
   - name: Install AWS CLI
+    shell: bash
     run: |
-      curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
+      curl -sSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
       unzip -q awscliv2.zip
 
-      ./aws/install \
-        --bin-dir $HOME/.local/bin \
-        --install-dir $HOME/.local/aws-cli \
-        --update
+      ./aws/install --bin-dir $HOME/.local/bin --install-dir $HOME/.local/aws-cli --update
 
       echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       aws --version
 
-  - name: Configure AWS Credentials (OIDC)
+  - name: Configure AWS Credentials
     uses: aws-actions/configure-aws-credentials@v4
     with:
       role-to-assume: ${{ vars.AWS_ROLE_ARN }}
@@ -59,6 +55,13 @@ steps:
 
   - name: Setup Helm
     uses: azure/setup-helm@v4
+
+  - name: Verify tooling
+    run: |
+      which aws
+      aws --version
+      kubectl version --client
+      helm version
 
   - name: Update kubeconfig
     run: |
