@@ -378,7 +378,7 @@ resource "aws_iam_role_policy_attachment" "github_actions_ecr" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
 }
 
-# EKS describe — update-kubeconfig + helm installs in bootstrap workflow
+# EKS describe + S3 state + load balancer cleanup — for bootstrap + destroy workflows
 resource "aws_iam_role_policy" "github_actions_eks" {
   name = "eks-access"
   role = aws_iam_role.github_actions.name
@@ -396,6 +396,15 @@ resource "aws_iam_role_policy" "github_actions_eks" {
         Effect   = "Allow"
         Action   = ["elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DeleteLoadBalancer"]
         Resource = "*"
+      },
+      {
+        # tofu state bucket — needed for destroy workflow (OIDC) to read/write state
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketVersioning"]
+        Resource = [
+          "arn:aws:s3:::devops-lab-tofu-state-${data.aws_caller_identity.current.account_id}",
+          "arn:aws:s3:::devops-lab-tofu-state-${data.aws_caller_identity.current.account_id}/*",
+        ]
       }
     ]
   })

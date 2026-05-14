@@ -42,17 +42,18 @@ jobs:
     if: github.event.inputs.confirm == 'destroy'
 
     permissions:
-      id-token: write
       contents: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials (OIDC)
+      # Static creds — same as infra-apply (OIDC role lacks S3 state bucket access)
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup kubectl
