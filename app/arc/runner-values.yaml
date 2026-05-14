@@ -7,7 +7,7 @@
 #          --version 0.10.1
 
 # GitHub App auth — secret created by bootstrap workflow
-githubConfigUrl: "https://github.com/imsameerkhan12"
+githubConfigUrl: "https://github.com/imsameerkhan12/devops-master-prep"
 githubConfigSecret: "arc-github-app-secret"
 
 # Scale to zero when idle — no cost for idle runners
