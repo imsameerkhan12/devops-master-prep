@@ -75,10 +75,8 @@ jobs:
             docker push "$dst"
           }
 
-          # ARC — controller image tag matches chart version
-          push_image \
-            "ghcr.io/actions/actions-runner:latest" \
-            "${ECR}/ghcr-io/actions/actions-runner:latest"
+          # ARC controller — pulled from ECR (controller runs on cluster)
+          # Runner image pulled from ghcr.io directly (nodes in public subnets have internet)
           push_image \
             "ghcr.io/actions/gha-runner-scale-set-controller:${{ env.ARC_CHART_VERSION }}" \
             "${ECR}/ghcr-io/actions/gha-runner-scale-set-controller:${{ env.ARC_CHART_VERSION }}"
@@ -141,7 +139,6 @@ jobs:
             --version ${{ env.ARC_CHART_VERSION }} \
             -n arc-runners \
             -f app/arc/runner-values.yaml \
-            --set "template.spec.containers[0].image=${{ vars.ECR_REGISTRY }}/ghcr-io/actions/actions-runner:latest" \
             --atomic --timeout=3m
 
       # ── cert-manager ─────────────────────────────────────────────────────

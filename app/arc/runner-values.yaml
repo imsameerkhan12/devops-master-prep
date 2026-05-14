@@ -18,6 +18,5 @@ template:
   spec:
     containers:
       - name: runner
-        # Override on deploy: --set template.spec.containers[0].image=<ECR_REGISTRY>/ghcr-io/actions/actions-runner:latest
-        # Nodes are in private subnets — image must come from ECR pull-through cache
-        image: "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/ghcr-io/actions/actions-runner:latest"
+        # Nodes in public subnets — pull directly from ghcr.io (no ECR needed)
+        image: "ghcr.io/actions/actions-runner:latest"
