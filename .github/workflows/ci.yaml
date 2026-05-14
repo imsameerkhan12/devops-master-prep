@@ -1,95 +1,93 @@
 name: CI
 
 on:
-pull_request:
-paths:
-- "app/s3-lister/**"
+  pull_request:
+    paths:
+      - "app/s3-lister/**"
 
-push:
-branches:
-- main
-paths:
-- "app/s3-lister/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "app/s3-lister/**"
 
 concurrency:
-group: ci-${{ github.ref }}
-cancel-in-progress: true
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
-AWS_REGION: us-east-1
+  AWS_REGION: us-east-1
 
 jobs:
-lint-and-deploy:
-name: Lint + Deploy
-runs-on: arc-runner-set
+  lint-and-deploy:
+    name: Lint + Deploy
+    runs-on: arc-runner-set
 
-```
-permissions:
-  id-token: write
-  contents: read
+    permissions:
+      id-token: write
+      contents: read
 
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  - name: Install AWS CLI
-    run: |
-      curl -sSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
-      unzip -q awscliv2.zip
-      ./aws/install --bin-dir "$HOME/.local/bin" --install-dir "$HOME/.local/aws-cli" --update
-      echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      export PATH="$HOME/.local/bin:$PATH"
-      aws --version
+      - name: Install AWS CLI
+        run: |
+          curl -sSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
+          unzip -q awscliv2.zip
+          ./aws/install --bin-dir "$HOME/.local/bin" --install-dir "$HOME/.local/aws-cli" --update
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+          aws --version
 
-  - name: Configure AWS Credentials
-    uses: aws-actions/configure-aws-credentials@v4
-    with:
-      role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-      aws-region: ${{ env.AWS_REGION }}
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-  - name: Setup kubectl
-    uses: azure/setup-kubectl@v4
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
 
-  - name: Setup Helm
-    uses: azure/setup-helm@v4
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
 
-  - name: Verify tooling
-    run: |
-      which aws
-      aws --version
-      kubectl version --client
-      helm version
+      - name: Verify tooling
+        run: |
+          which aws
+          aws --version
+          kubectl version --client
+          helm version
 
-  - name: Update kubeconfig
-    run: |
-      aws eks update-kubeconfig \
-        --name "${{ vars.CLUSTER_NAME }}" \
-        --region "${{ env.AWS_REGION }}"
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ vars.CLUSTER_NAME }}" \
+            --region "${{ env.AWS_REGION }}"
 
-  - name: Helm Lint
-    run: helm lint app/s3-lister/chart
+      - name: Helm Lint
+        run: helm lint app/s3-lister/chart
 
-  - name: Helm Template
-    run: |
-      helm template s3-lister app/s3-lister/chart \
-        --set image.init=${{ vars.ECR_REGISTRY }}/docker-hub/amazon/aws-cli:latest \
-        --set image.nginx=${{ vars.ECR_REGISTRY }}/docker-hub/library/nginx:alpine
+      - name: Helm Template
+        run: |
+          helm template s3-lister app/s3-lister/chart \
+            --set image.init=${{ vars.ECR_REGISTRY }}/docker-hub/amazon/aws-cli:latest \
+            --set image.nginx=${{ vars.ECR_REGISTRY }}/docker-hub/library/nginx:alpine
 
-  - name: Deploy s3-lister
-    if: github.ref == 'refs/heads/main'
-    run: |
-      helm upgrade --install s3-lister app/s3-lister/chart \
-        --namespace default \
-        --create-namespace \
-        --set image.init=${{ vars.ECR_REGISTRY }}/docker-hub/amazon/aws-cli:latest \
-        --set image.nginx=${{ vars.ECR_REGISTRY }}/docker-hub/library/nginx:alpine \
-        --atomic \
-        --timeout 3m
+      - name: Deploy s3-lister
+        if: github.ref == 'refs/heads/main'
+        run: |
+          helm upgrade --install s3-lister app/s3-lister/chart \
+            --namespace default \
+            --create-namespace \
+            --set image.init=${{ vars.ECR_REGISTRY }}/docker-hub/amazon/aws-cli:latest \
+            --set image.nginx=${{ vars.ECR_REGISTRY }}/docker-hub/library/nginx:alpine \
+            --atomic \
+            --timeout 3m
 
-  - name: Verify deploy
-    if: github.ref == 'refs/heads/main'
-    run: |
-      kubectl rollout status deployment/s3-lister \
-        --namespace default \
-        --timeout 2m
-```
+      - name: Verify deploy
+        if: github.ref == 'refs/heads/main'
+        run: |
+          kubectl rollout status deployment/s3-lister \
+            --namespace default \
+            --timeout 2m
