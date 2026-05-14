@@ -4,7 +4,7 @@
 # Install: helm upgrade --install arc-runner-set oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
 #          -n arc-runners --create-namespace -f app/arc/runner-values.yaml
 #          --set "template.spec.containers[0].image=<ECR_REGISTRY>/ghcr-io/actions/actions-runner:latest"
-#          --version 0.13.0
+#          --version 0.14.0
 
 # GitHub App auth — secret created by bootstrap workflow
 githubConfigUrl: "https://github.com/imsameerkhan12/devops-master-prep"
