@@ -837,6 +837,377 @@ Final platform stack (what actually worked on t3.medium):
 
 ---
 
+---
+
+## 16. ARC Runner — githubConfigUrl Must Be Repo-Level for Personal Accounts
+
+### Hindi
+
+```
+Galti: githubConfigUrl = "https://github.com/imsameerkhan12"  ← user-level URL
+       ARC listener connected, but CI jobs never picked up
+
+Kyu: Personal account mein, runner registration REPO level pe hoti hai
+     Org accounts mein org-level URL kaam karta hai
+     Individual/personal account = repo-level URL required
+
+Fix: githubConfigUrl = "https://github.com/imsameerkhan12/devops-master-prep"
+
+Proof: GitHub → Repo → Settings → Actions → Runners
+       Yahan runner dikhega tab hi job pick up hoga
+```
+
+### English — Interview Answer
+
+> "ARC's githubConfigUrl must match the scope where runners are registered. For GitHub Organizations, you can use `https://github.com/MY-ORG`. But for personal accounts, runners register at repository level — you must use the full repo URL `https://github.com/user/repo`. Using the user-level URL causes the listener to appear connected but jobs are never dispatched."
+
+---
+
+## 17. GitHub App Permissions — Administration: Read+Write Required
+
+### Hindi
+
+```
+ARC GitHub App ko runner register karne ke liye specific permissions chahiye:
+
+Required:
+  Actions:        Read & Write   ← jobs queue access
+  Administration: Read & Write   ← runner registration/deregistration
+  Metadata:       Read-only      ← mandatory for all apps
+
+Bina Administration permission:
+  Listener connected dikha → lekin koi runner registered nahi tha
+  GitHub Settings → Runners → empty list
+
+Fix: GitHub → App settings → Permissions → Administration: R+W
+     Phir installation ko accept karna padta hai (GitHub email aata hai)
+     Phir bootstrap re-run karo → naya token issue hota hai
+```
+
+---
+
+## 18. EKS Nodes in Public Subnet — ARC Needs GitHub Connectivity
+
+### Hindi
+
+```
+Original setup: Nodes private subnets mein
+Problem: Private subnets + no NAT Gateway
+  → Nodes api.github.com reach nahi kar sakte
+  → ARC runner pods start → register attempt → timeout/fail
+
+Fix: node_subnet_ids = module.vpc.public_subnets
+
+Kyu public subnets kaam karte hain:
+  Public subnet → node has public IP → direct internet access
+  api.github.com → runner registers → job picks up
+  ECR VPC endpoint still works → private image pulls
+
+Public subnet nodes ka side effect — Ec2SubnetInvalidConfiguration:
+  Public subnet mein EKS nodes = map_public_ip_on_launch = true REQUIRED
+  Bina iske: "Ec2SubnetInvalidConfiguration" error on node group create
+  Fix: VPC module mein map_public_ip_on_launch = true add karo
+```
+
+### IaC Changes:
+
+```hcl
+# iac/modules/vpc/main.tf
+module "vpc" {
+  map_public_ip_on_launch = true   # ← REQUIRED for EKS nodes in public subnets
+}
+
+# iac/modules/eks/main.tf
+eks_managed_node_groups = {
+  devops-lab = {
+    subnet_ids = var.node_subnet_ids  # ← separate var, not private_subnet_ids
+  }
+}
+
+# iac/envs/dev/main.tf
+module "eks" {
+  node_subnet_ids    = module.vpc.public_subnets   # ARC needs internet
+  private_subnet_ids = module.vpc.private_subnets  # control plane stays private
+}
+```
+
+---
+
+## 19. Node IAM Policy Loss — Community Module vs Explicit Resources
+
+### Hindi
+
+```
+Bug: Node group recreate pe (subnet change ki wajah se) IAM policies detach ho gayi
+     Community module ka iam_role_additional_policies partial-failed apply pe lost ho jaata hai
+
+Symptom: Runner pod ErrImagePull / 403 from ECR
+  kubectl describe pod: "failed to pull image: 403 Unauthorized"
+  Node role had ZERO managed policies attached
+
+Root cause:
+  Community EKS module internally manages policy attachments
+  Node group recreate (due to subnet_ids change) → tofu recreates node group resource
+  Partial apply fail pe → new node group exists in AWS but old state mein tha
+  Module's iam_role_additional_policies = lost (dangling mid-apply)
+
+Wrong fix: aws iam attach-role-policy via CLI ← user ne galat kaha, CLI fix na karo
+
+Correct IaC fix:
+  1. Remove iam_role_additional_policies from module config
+  2. Add EXPLICIT aws_iam_role_policy_attachment resources OUTSIDE the module
+  These survive node group recreation because they're independent resources
+```
+
+### IaC Fix:
+
+```hcl
+# iac/envs/dev/main.tf — explicit attachments, survive node group recreation
+resource "aws_iam_role_policy_attachment" "node_worker" {
+  role       = module.eks.node_group_role_name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+}
+resource "aws_iam_role_policy_attachment" "node_cni" {
+  role       = module.eks.node_group_role_name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+}
+resource "aws_iam_role_policy_attachment" "node_ecr_readonly" {
+  role       = module.eks.node_group_role_name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+```
+
+### English — Interview Answer
+
+> "The EKS community Terraform module manages IAM policy attachments internally. During a partial-failed apply — where the node group was recreated due to a subnet change — the module's `iam_role_additional_policies` block was not reapplied, leaving the new node group with zero IAM policies. The fix is to move all policy attachments outside the module as explicit `aws_iam_role_policy_attachment` resources. These are independent resources in Terraform state and survive node group recreation."
+
+---
+
+## 20. Kubelet ECR Credential Cache — 12-Hour Poison Bug
+
+### Hindi
+
+```
+Bug: Node ko ECR policy attach ki, phir bhi 403 aata raha
+     "AmazonEC2ContainerRegistryReadOnly attached" → still 403
+
+Root cause: Kubelet credential provider cache
+  Jab node boot hota hai, kubelet ECR credentials fetch karta hai
+  Agar us waqt policy nahi thi → failed/empty token cache hota hai
+  Cache 12 GHANTE tak valid rehti hai
+  Naya policy attach = cache invalidate nahi hoti immediately
+
+Symptom: Node running hai, policy hai, but ECR pull 403
+
+Solution (used): Runner image ECR se nahi, ghcr.io se directly pull karo
+  Public subnet nodes have internet → ghcr.io/actions/actions-runner directly accessible
+  ECR credential cache bypass ho jaata hai
+
+Production solution: Node replace karo (terminate instance → ASG respawns fresh node)
+  Naya node = fresh credential cache = ECR policy apply ho jaata hai
+```
+
+### runner-values.yaml Change:
+
+```yaml
+template:
+  spec:
+    containers:
+      - name: runner
+        # Direct pull from ghcr.io — nodes have internet (public subnets)
+        # Bypasses ECR credential cache that was poisoned at node boot
+        image: "ghcr.io/actions/actions-runner:latest"
+```
+
+### English — Interview Answer
+
+> "Kubelet caches ECR credentials for up to 12 hours. If a node boots without the ECR policy attached, it caches a failed/empty auth token. Attaching the policy later doesn't invalidate the cache — the node still gets 403 until the cache expires or the node is replaced. In our case, we bypassed ECR entirely by pulling the runner image directly from ghcr.io — since nodes are in public subnets they have direct internet access. In production, the clean fix is to terminate and replace the node."
+
+---
+
+## 21. t3.medium Pod Limit — VPC CNI IP Exhaustion
+
+### Hindi
+
+```
+t3.medium hardware limits:
+  Max ENIs:           3
+  IPs per ENI:        6
+  Max pods formula:   (ENIs-1) × (IPs-1) + 2 = (3-1)×(6-1)+2 = 12? No...
+  
+  Correct formula:    (max_ENIs × (max_IPs-1)) + 2 = 3×5+2 = 17 max pods
+
+Cluster ka pod count:
+  kube-system: aws-node, kube-proxy, coredns×2, ebs-csi-controller×2,
+               ebs-csi-node, eks-pod-identity-agent, metrics-server×2  = 10
+  arc-systems: arc-controller, arc-listener                              = 2
+  cert-manager: cert-manager×3                                           = 3
+  traefik: traefik                                                        = 1
+  Total system pods:                                                      = 16
+
+Available for runner: 17 - 16 = 1 slot only
+
+Problem: ARC runner pod needs 1 slot
+  If previous runner pod IP not released yet → new pod = FailedCreatePodSandBox
+  Error: "failed to assign an IP address to container"
+  
+Cascade effect:
+  1st pod attempt fails (no IP) → ARC retries same EphemeralRunner
+  Same EphemeralRunner = same JIT token
+  JIT token = ONE-TIME USE (ephemeral runner registration token)
+  2nd attempt with used JIT token → runner exits immediately code 0
+  ARC counts as failure → after 5 failures → EphemeralRunner marked Failed
+  Loop continues with new EphemeralRunner
+```
+
+### Fix — VPC CNI Prefix Delegation:
+
+```hcl
+# iac/modules/eks/main.tf
+cluster_addons = {
+  vpc-cni = {
+    most_recent = true
+    configuration_values = jsonencode({
+      env = {
+        ENABLE_PREFIX_DELEGATION = "true"  # each ENI gets /28 prefix = 16 IPs
+        WARM_PREFIX_TARGET       = "1"     # keep 1 extra prefix pre-allocated
+      }
+    })
+  }
+}
+```
+
+```
+Result:
+  t3.medium without prefix delegation: 17 max pods
+  t3.medium WITH prefix delegation:   110 max pods
+  
+  aws-node DaemonSet auto-restarts with new config
+  New ENI prefixes allocated → pods can spawn freely
+```
+
+### English — Interview Answer
+
+> "t3.medium supports max 17 pods via the VPC CNI formula: (ENIs × IPs_per_ENI-1) + 2. With 16 system pods running, only 1 slot was left for the ARC runner. When the previous runner pod released its IP slowly, the new pod would fail with FailedCreatePodSandBox. This poisoned the JIT token — since JIT tokens are one-time-use, any retry of the same EphemeralRunner would result in the runner exiting immediately. The fix is VPC CNI prefix delegation: each ENI gets a /28 prefix (16 IPs) instead of individual IPs, pushing the limit to 110 pods on t3.medium."
+
+---
+
+## 22. ARC JIT Token — One-Time Use, Don't Retry Same EphemeralRunner
+
+### Hindi
+
+```
+ARC ephemeral runner flow (JIT mode):
+  1. GitHub job queued → listener detects
+  2. Listener → EphemeralRunner resource banata hai
+  3. EphemeralRunner controller → GitHub API se JIT config fetch karta hai
+  4. JIT config = one-time registration token (ek hi baar use ho sakta hai)
+  5. Pod create hota hai → ACTIONS_RUNNER_INPUT_JITCONFIG env var inject
+  6. Runner: config.sh --jitconfig TOKEN → GitHub pe register hota hai
+  7. Runner: run.sh → job wait karta hai → job run → pod exit (code 0)
+
+JIT token already used hone pe:
+  Pod retry hota hai → same token → config.sh fails silently
+  Runner exits code 0 (no output, no error — shell script has no set -e)
+  ARC controller: "pod finished, runner still in service"
+  → delete pod → create again → same loop
+  → 5 failures → EphemeralRunner = Failed
+
+Debug tip: exitCode: 0, startedAt = finishedAt (same second) = JIT token reuse
+           exitCode: non-zero = actual crash
+           Empty logs + exit 0 = token already consumed, runner couldn't configure
+
+Fix: Always ensure FIRST pod attempt succeeds (fix IP exhaustion first)
+     Delete stale EphemeralRunners with: kubectl delete ephemeralrunner -n arc-runners --all
+     Never manually retry — let ARC create a fresh EphemeralRunner
+```
+
+### GitHub Actions listener log interpretation:
+
+```
+"totalRegisteredRunners": 0   ← runners not reaching idle state (JIT issue or network)
+"totalAssignedJobs": 1        ← GitHub has a job waiting
+"decision": 1                 ← ARC wants 1 runner
+
+Pattern = runners created but never picking up job
+Root cause = JIT tokens being consumed on failed first attempts
+```
+
+---
+
+## 23. Destroy Workflow — OIDC Role Missing S3 State Access
+
+### Hindi
+
+```
+Bug: Destroy workflow → 403 Forbidden on S3 state bucket
+  tofu init → S3: HeadObject → Forbidden
+
+Root cause: Destroy workflow uses OIDC (github_actions IAM role)
+  github_actions role ke paas tha:
+    ✓ ECR PowerUser
+    ✓ EKS DescribeCluster
+    ✓ ELB DeleteLoadBalancer
+    ✗ S3 state bucket access  ← MISSING
+
+Infra-apply uses static creds (sameer's IAM user) → admin → S3 ok
+Destroy uses OIDC → github_actions role → no S3 → 403
+
+Two-part fix:
+  1. destroy.yaml: static credentials use karo (infra-apply ki tarah)
+     Immediate fix — destroy works now
+  
+  2. IaC: github_actions role ko S3 state bucket access do
+     Future-proof — destroy OIDC se bhi work karega
+
+S3 permission needed for tofu state:
+  s3:GetObject, PutObject, DeleteObject, ListBucket, GetBucketVersioning
+  Resource: devops-lab-tofu-state-${account_id} + /*
+```
+
+### Lesson:
+
+```
+Agar infra-apply aur destroy different auth methods use karte hain:
+  → Dono ke paas same resources ka access hona chahiye
+  → Test karo ki destroy ka IAM role sab access kar sakta hai before you need it
+  → Infra-apply aur destroy ka auth method same rakhna simplest solution hai
+```
+
+---
+
+## 24. kubectl Local Access — EKS Access Entry vs aws-auth
+
+### Hindi
+
+```
+Old way (before EKS 1.23): aws-auth ConfigMap
+  kubectl edit configmap aws-auth -n kube-system
+  Manually IAM user/role add karo
+  ConfigMap corrupt ho jaaye → lockout
+
+New way (EKS 1.23+): EKS Access Entries
+  AWS API se manage hota hai — no kubectl needed
+  aws eks create-access-entry --cluster-name ... --principal-arn ...
+  aws eks associate-access-policy ... --policy-arn AmazonEKSClusterAdminPolicy
+
+IaC mein kaise:
+  enable_cluster_creator_admin_permissions = true (EKS community module)
+  Jab tofu apply chalta hai → caller identity automatically EKS admin ban jaati hai
+  infra-apply workflow sameer ke static creds se chala → sameer = cluster creator
+  Sameer automatically cluster-admin ban jaata hai
+  No separate aws_eks_access_entry resource needed for sameer!
+
+Kubeconfig setup:
+  aws eks update-kubeconfig --name devops-lab-eks --region us-east-1
+```
+
+### English — Interview Answer
+
+> "Modern EKS cluster access uses Access Entries instead of the old aws-auth ConfigMap. Access Entries are managed via AWS API — no risk of ConfigMap corruption causing lockout. When using the terraform-aws-modules/eks community module with `enable_cluster_creator_admin_permissions = true`, whoever runs `tofu apply` automatically gets cluster-admin access. Since our infra-apply workflow uses sameer's IAM credentials, sameer automatically has admin access without any additional IAM configuration."
+
+---
+
 ## Concept Summary
 
 | Concept | Key Point |
@@ -856,3 +1227,13 @@ Final platform stack (what actually worked on t3.medium):
 | ARC scale-to-zero | No pods when idle = "No resources found in arc-runners" is CORRECT |
 | t3.medium limit | 4GB RAM — can run Traefik + ARC + cert-manager, but not ArgoCD too |
 | EKS Access Entry | Modern cluster access (no aws-auth ConfigMap) — IAM role → cluster-admin |
+| githubConfigUrl | Personal account = repo-level URL, Org = org-level URL |
+| GitHub App perms | Administration R+W required to register self-hosted runners |
+| Public node subnet | ARC runners need internet → public subnets, map_public_ip_on_launch=true |
+| Node IAM policy loss | Use explicit aws_iam_role_policy_attachment outside community module |
+| Kubelet ECR cache | 12h cache — bad policy at boot poisons pulls; fix = replace node or bypass ECR |
+| t3.medium 17-pod limit | VPC CNI formula: max 17 pods without prefix delegation |
+| Prefix delegation | ENABLE_PREFIX_DELEGATION=true → 110 max pods on t3.medium |
+| JIT token one-time | Each EphemeralRunner = one token; IP failure on first attempt → cascade fail |
+| exitCode:0 no logs | Runner used expired/consumed JIT token → exits immediately silently |
+| Destroy S3 403 | OIDC role needs S3 state bucket perms; or use static creds for destroy |
