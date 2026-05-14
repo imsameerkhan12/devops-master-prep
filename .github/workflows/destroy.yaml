@@ -1,0 +1,144 @@
+# Destroy Infrastructure — removes ALL AWS resources that cost money
+#
+# Order matters:
+#   1. ArgoCD Application (stop GitOps sync — prevents re-deploy during destroy)
+#   2. Apps (s3-lister)
+#   3. Platform tools (ArgoCD, cert-manager, ARC, Traefik)
+#      ↑ Traefik MUST be last before tofu — it owns the NLB
+#   4. Wait for NLB deletion — NLB ENIs block VPC deletion
+#   5. tofu destroy — tears down EKS, VPC, ECR, IAM, S3 bucket
+#   6. Optional: teardown state bucket + Docker Hub secret
+#
+# Runs on: GitHub-hosted runner (ARC is being torn down — can't use it)
+
+name: Destroy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type 'destroy' to confirm — this deletes EVERYTHING"
+        required: true
+        type: string
+      destroy_state_bucket:
+        description: "Also delete S3 state bucket + Docker Hub secret (IRREVERSIBLE)"
+        required: false
+        type: boolean
+        default: false
+
+# Prevent concurrent destroy + bootstrap
+concurrency:
+  group: platform-ops
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  destroy:
+    name: Destroy Infrastructure
+    runs-on: ubuntu-latest
+
+    # Hard gate — workflow fails immediately if wrong confirm value
+    if: github.event.inputs.confirm == 'destroy'
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+
+      # Cluster may already be gone if partially destroyed — don't fail here
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name ${{ vars.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} \
+            || echo "Cluster not found — skipping kubectl steps"
+
+      # ── Uninstall in reverse order ────────────────────────────────────────
+
+      - name: Remove ArgoCD Application (stop GitOps sync)
+        run: kubectl delete application s3-lister -n argocd --ignore-not-found || true
+
+      - name: Uninstall s3-lister
+        run: helm uninstall s3-lister -n default --ignore-not-found --wait 2>/dev/null || true
+
+      - name: Uninstall ArgoCD
+        run: helm uninstall argocd -n argocd --ignore-not-found --wait 2>/dev/null || true
+
+      - name: Uninstall cert-manager
+        run: helm uninstall cert-manager -n cert-manager --ignore-not-found --wait 2>/dev/null || true
+
+      - name: Uninstall ARC RunnerSet
+        run: helm uninstall arc-runner-set -n arc-runners --ignore-not-found --wait 2>/dev/null || true
+
+      - name: Uninstall ARC Controller
+        run: helm uninstall arc-controller -n arc-systems --ignore-not-found --wait 2>/dev/null || true
+
+      # Traefik last — its uninstall triggers NLB deletion via cloud controller
+      - name: Uninstall Traefik (triggers NLB deletion)
+        run: helm uninstall traefik -n traefik --ignore-not-found --wait 2>/dev/null || true
+
+      # ── Wait for NLB to fully delete ──────────────────────────────────────
+      # NLB ENIs stay attached to subnets for ~60s after service deletion
+      # If tofu destroy runs while NLBs exist → VPC deletion fails (DependencyViolation)
+      - name: Wait for NLB deletion
+        run: |
+          echo "Waiting 60s for NLB to release ENIs..."
+          sleep 60
+
+          VPC_ID=$(aws eks describe-cluster \
+            --name ${{ vars.CLUSTER_NAME }} \
+            --query 'cluster.resourcesVpcConfig.vpcId' \
+            --output text 2>/dev/null || echo "")
+
+          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+            LBS=$(aws elbv2 describe-load-balancers \
+              --query "LoadBalancers[?VpcId=='${VPC_ID}'].LoadBalancerArn" \
+              --output text)
+            if [ -n "$LBS" ]; then
+              echo "NLBs still exist — force deleting..."
+              for lb in $LBS; do
+                echo "Deleting $lb"
+                aws elbv2 delete-load-balancer --load-balancer-arn "$lb"
+              done
+              sleep 30
+            fi
+            echo "NLBs cleared."
+          fi
+
+      # ── OpenTofu Destroy ──────────────────────────────────────────────────
+      - name: OpenTofu Destroy
+        working-directory: iac/envs/dev
+        env:
+          # Override profile — use OIDC credentials instead of named profile
+          TF_VAR_aws_profile: ""
+        run: |
+          tofu init
+          tofu destroy -auto-approve --var-file=dev.tfvars
+
+      # ── Optional: delete state bucket ─────────────────────────────────────
+      # Only runs if destroy_state_bucket=true in workflow inputs
+      # WARNING: After this, tofu cannot be used until bootstrap re-runs
+      - name: Delete State Bucket + Docker Hub Secret
+        if: github.event.inputs.destroy_state_bucket == 'true'
+        run: bash iac/bootstrap/teardown-state-backend.sh --yes
+
+      - name: Done
+        run: echo "=== Destroy complete — all billable resources removed ==="

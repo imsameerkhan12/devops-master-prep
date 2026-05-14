@@ -7,8 +7,12 @@ terraform {
 
   required_providers {
     aws = {
-      source  = "hashicorp/aws"  # OpenTofu registry se AWS provider
-      version = "~> 5.0"         # 5.x use karo, 6.x nahi
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
     }
   }
 
@@ -26,5 +30,6 @@ terraform {
 # AWS provider config — region + profile
 provider "aws" {
   region  = var.aws_region
-  profile = var.aws_profile
+  # Empty profile = use default credential chain (GitHub Actions OIDC, instance profile, etc.)
+  profile = var.aws_profile != "" ? var.aws_profile : null
 }

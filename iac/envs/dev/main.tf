@@ -74,7 +74,12 @@ resource "aws_iam_role_policy" "node_ecr_pull_through" {
         "ecr:BatchImportUpstreamImage",  # upstream se cache mein import karo
         "ecr:CreateRepository",          # first pull pe repo auto-create
       ]
-      Resource = "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/docker-hub/*"
+      Resource = [
+        "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/docker-hub/*",
+        "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/ghcr-io/*",
+        "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/quay-io/*",
+        "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/k8s-registry/*",
+      ]
     }]
   })
 }
@@ -208,4 +213,228 @@ resource "aws_eks_pod_identity_association" "s3_reader" {
   role_arn        = aws_iam_role.s3_reader.arn
 
   depends_on = [module.eks]
+}
+
+# ─────────────────────────────────────────────
+# ECR LAYER — Additional pull-through caches
+# ghcr.io  → ARC runner images
+# quay.io  → ArgoCD + cert-manager images
+# ─────────────────────────────────────────────
+
+# ghcr.io — GitHub Container Registry (public, no credentials needed)
+resource "aws_ecr_pull_through_cache_rule" "ghcr" {
+  ecr_repository_prefix = "ghcr-io"
+  upstream_registry_url = "ghcr.io"
+}
+
+# quay.io — Red Hat registry (public, no credentials needed)
+resource "aws_ecr_pull_through_cache_rule" "quay" {
+  ecr_repository_prefix = "quay-io"
+  upstream_registry_url = "quay.io"
+}
+
+# ARC images — pre-create so they don't orphan on destroy
+resource "aws_ecr_repository" "ghcr_actions_runner" {
+  name                 = "ghcr-io/actions/actions-runner"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+  image_scanning_configuration { scan_on_push = true }
+  tags       = var.tags
+  depends_on = [aws_ecr_pull_through_cache_rule.ghcr]
+}
+
+resource "aws_ecr_repository" "ghcr_arc_controller" {
+  name                 = "ghcr-io/actions/gha-runner-scale-set-controller"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+  image_scanning_configuration { scan_on_push = true }
+  tags       = var.tags
+  depends_on = [aws_ecr_pull_through_cache_rule.ghcr]
+}
+
+# ArgoCD image
+resource "aws_ecr_repository" "quay_argocd" {
+  name                 = "quay-io/argoproj/argocd"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+  image_scanning_configuration { scan_on_push = true }
+  tags       = var.tags
+  depends_on = [aws_ecr_pull_through_cache_rule.quay]
+}
+
+# ArgoCD Redis — uses docker-hub (already set up)
+resource "aws_ecr_repository" "docker_hub_redis" {
+  name                 = "docker-hub/library/redis"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+  image_scanning_configuration { scan_on_push = true }
+  tags       = var.tags
+  depends_on = [aws_ecr_pull_through_cache_rule.docker_hub]
+}
+
+# cert-manager images
+resource "aws_ecr_repository" "quay_cert_manager_controller" {
+  name                 = "quay-io/jetstack/cert-manager-controller"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+  image_scanning_configuration { scan_on_push = true }
+  tags       = var.tags
+  depends_on = [aws_ecr_pull_through_cache_rule.quay]
+}
+
+resource "aws_ecr_repository" "quay_cert_manager_cainjector" {
+  name                 = "quay-io/jetstack/cert-manager-cainjector"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+  image_scanning_configuration { scan_on_push = true }
+  tags       = var.tags
+  depends_on = [aws_ecr_pull_through_cache_rule.quay]
+}
+
+resource "aws_ecr_repository" "quay_cert_manager_webhook" {
+  name                 = "quay-io/jetstack/cert-manager-webhook"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+  image_scanning_configuration { scan_on_push = true }
+  tags       = var.tags
+  depends_on = [aws_ecr_pull_through_cache_rule.quay]
+}
+
+resource "aws_ecr_repository" "quay_cert_manager_startupapicheck" {
+  name                 = "quay-io/jetstack/cert-manager-startupapicheck"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+  image_scanning_configuration { scan_on_push = true }
+  tags       = var.tags
+  depends_on = [aws_ecr_pull_through_cache_rule.quay]
+}
+
+# Lifecycle policies for all new repos (reuse existing local)
+resource "aws_ecr_lifecycle_policy" "ghcr_actions_runner" {
+  repository = aws_ecr_repository.ghcr_actions_runner.name
+  policy     = local.ecr_lifecycle_policy
+}
+
+resource "aws_ecr_lifecycle_policy" "ghcr_arc_controller" {
+  repository = aws_ecr_repository.ghcr_arc_controller.name
+  policy     = local.ecr_lifecycle_policy
+}
+
+resource "aws_ecr_lifecycle_policy" "quay_argocd" {
+  repository = aws_ecr_repository.quay_argocd.name
+  policy     = local.ecr_lifecycle_policy
+}
+
+resource "aws_ecr_lifecycle_policy" "docker_hub_redis" {
+  repository = aws_ecr_repository.docker_hub_redis.name
+  policy     = local.ecr_lifecycle_policy
+}
+
+resource "aws_ecr_lifecycle_policy" "quay_cert_manager_controller" {
+  repository = aws_ecr_repository.quay_cert_manager_controller.name
+  policy     = local.ecr_lifecycle_policy
+}
+
+resource "aws_ecr_lifecycle_policy" "quay_cert_manager_cainjector" {
+  repository = aws_ecr_repository.quay_cert_manager_cainjector.name
+  policy     = local.ecr_lifecycle_policy
+}
+
+resource "aws_ecr_lifecycle_policy" "quay_cert_manager_webhook" {
+  repository = aws_ecr_repository.quay_cert_manager_webhook.name
+  policy     = local.ecr_lifecycle_policy
+}
+
+resource "aws_ecr_lifecycle_policy" "quay_cert_manager_startupapicheck" {
+  repository = aws_ecr_repository.quay_cert_manager_startupapicheck.name
+  policy     = local.ecr_lifecycle_policy
+}
+
+# ─────────────────────────────────────────────
+# CI/CD LAYER — GitHub Actions OIDC
+# No long-lived credentials — OIDC = short-lived tokens per workflow run
+# ─────────────────────────────────────────────
+
+# Fetch GitHub's OIDC certificate dynamically (avoids hardcoding thumbprint)
+data "tls_certificate" "github_actions" {
+  url = "https://token.actions.githubusercontent.com/.well-known/openid-configuration"
+}
+
+# OIDC provider — trust GitHub Actions JWT tokens
+resource "aws_iam_openid_connect_provider" "github_actions" {
+  url             = "https://token.actions.githubusercontent.com"
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [data.tls_certificate.github_actions.certificates[0].sha1_fingerprint]
+}
+
+# IAM Role — GitHub Actions workflows assume this via OIDC
+# Condition: only imsameerkhan12 repos can assume (not any GitHub repo)
+resource "aws_iam_role" "github_actions" {
+  name = "${var.cluster_name}-github-actions"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Federated = aws_iam_openid_connect_provider.github_actions.arn }
+      Action    = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringLike = {
+          "token.actions.githubusercontent.com:sub" = "repo:imsameerkhan12/*:*"
+        }
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
+
+  tags = var.tags
+}
+
+# ECR Power User — build + push images from CI
+resource "aws_iam_role_policy_attachment" "github_actions_ecr" {
+  role       = aws_iam_role.github_actions.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
+}
+
+# EKS describe — update-kubeconfig + helm installs in bootstrap workflow
+resource "aws_iam_role_policy" "github_actions_eks" {
+  name = "eks-access"
+  role = aws_iam_role.github_actions.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["eks:DescribeCluster", "eks:ListClusters"]
+        Resource = "*"
+      },
+      {
+        # tofu destroy needs these to clean up load balancers before VPC deletion
+        Effect   = "Allow"
+        Action   = ["elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DeleteLoadBalancer"]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# EKS Access Entry — GitHub Actions role gets cluster-admin (for bootstrap + destroy)
+resource "aws_eks_access_entry" "github_actions" {
+  cluster_name  = module.eks.cluster_name
+  principal_arn = aws_iam_role.github_actions.arn
+  type          = "STANDARD"
+  depends_on    = [module.eks]
+}
+
+resource "aws_eks_access_policy_association" "github_actions" {
+  cluster_name  = module.eks.cluster_name
+  principal_arn = aws_iam_role.github_actions.arn
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+  access_scope {
+    type = "cluster"
+  }
+  depends_on = [aws_eks_access_entry.github_actions]
 }

@@ -1,0 +1,157 @@
+# Bootstrap Platform — installs all platform tools on EKS after tofu apply
+#
+# Runs on: GitHub-hosted runner (ubuntu-latest)
+# Why NOT ARC runner: ARC doesn't exist yet — this workflow installs it
+#
+# Required GitHub repo setup (Settings → Secrets and Variables):
+#   Secrets:
+#     ARC_GITHUB_APP_PRIVATE_KEY  — content of devops-lab-arc.pem (cat the file, paste raw)
+#   Variables:
+#     AWS_ROLE_ARN   — from: tofu output github_actions_role_arn
+#     ECR_REGISTRY   — from: tofu output ecr_registry
+#     CLUSTER_NAME   — devops-lab-eks
+
+name: Bootstrap Platform
+
+on:
+  workflow_dispatch:  # manual only — run after infra-apply completes
+
+# Prevent concurrent runs — Helm installs are not idempotent mid-flight
+concurrency:
+  group: platform-ops
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ARC_CHART_VERSION: "0.10.1"
+  ARGOCD_CHART_VERSION: "7.8.0"
+  CERT_MANAGER_CHART_VERSION: "1.17.0"
+  GATEWAY_API_VERSION: "v1.5.1"
+
+jobs:
+  bootstrap:
+    name: Install Platform Tools
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write  # required for OIDC token
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name ${{ vars.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+
+      # ── Gateway API CRDs ──────────────────────────────────────────────────
+      - name: Install Gateway API CRDs
+        run: |
+          kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/${{ env.GATEWAY_API_VERSION }}/standard-install.yaml
+
+      # ── Traefik ───────────────────────────────────────────────────────────
+      - name: Install Traefik
+        run: |
+          helm repo add traefik https://traefik.github.io/charts
+          helm repo update traefik
+          helm upgrade --install traefik traefik/traefik \
+            -n traefik --create-namespace \
+            -f app/traefik/values.yaml \
+            --set "image.registry=${{ vars.ECR_REGISTRY }}" \
+            --atomic --timeout=5m
+
+      # ── ARC Controller ────────────────────────────────────────────────────
+      - name: Install ARC Controller
+        run: |
+          helm upgrade --install arc-controller \
+            oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller \
+            --version ${{ env.ARC_CHART_VERSION }} \
+            -n arc-systems --create-namespace \
+            -f app/arc/controller-values.yaml \
+            --set "image.repository=${{ vars.ECR_REGISTRY }}/ghcr-io/actions/gha-runner-scale-set-controller" \
+            --atomic --timeout=3m
+
+      # ── ARC GitHub App Secret ─────────────────────────────────────────────
+      # Secret created imperatively — private key must NOT be in git
+      # --dry-run=client -o yaml | kubectl apply = idempotent (safe to re-run)
+      - name: Create ARC GitHub App Secret
+        env:
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets.ARC_GITHUB_APP_PRIVATE_KEY }}
+        run: |
+          kubectl create namespace arc-runners --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic arc-github-app-secret \
+            -n arc-runners \
+            --from-literal=github_app_id="3710409" \
+            --from-literal=github_app_installation_id="132252489" \
+            --from-literal=github_app_private_key="${GITHUB_APP_PRIVATE_KEY}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      # ── ARC RunnerSet ─────────────────────────────────────────────────────
+      - name: Install ARC RunnerSet
+        run: |
+          helm upgrade --install arc-runner-set \
+            oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set \
+            --version ${{ env.ARC_CHART_VERSION }} \
+            -n arc-runners \
+            -f app/arc/runner-values.yaml \
+            --set "template.spec.containers[0].image=${{ vars.ECR_REGISTRY }}/ghcr-io/actions/actions-runner:latest" \
+            --atomic --timeout=3m
+
+      # ── ArgoCD ────────────────────────────────────────────────────────────
+      - name: Install ArgoCD
+        run: |
+          helm repo add argo https://argoproj.github.io/argo-helm
+          helm repo update argo
+          helm upgrade --install argocd argo/argo-cd \
+            --version ${{ env.ARGOCD_CHART_VERSION }} \
+            -n argocd --create-namespace \
+            -f app/argocd/values.yaml \
+            --set "global.image.repository=${{ vars.ECR_REGISTRY }}/quay-io/argoproj/argocd" \
+            --set "redis.image.repository=${{ vars.ECR_REGISTRY }}/docker-hub/library/redis" \
+            --atomic --timeout=5m
+
+      # ── cert-manager ─────────────────────────────────────────────────────
+      - name: Install cert-manager
+        run: |
+          helm repo add jetstack https://charts.jetstack.io
+          helm repo update jetstack
+          helm upgrade --install cert-manager jetstack/cert-manager \
+            --version ${{ env.CERT_MANAGER_CHART_VERSION }} \
+            -n cert-manager --create-namespace \
+            --set crds.enabled=true \
+            --set "image.repository=${{ vars.ECR_REGISTRY }}/quay-io/jetstack/cert-manager-controller" \
+            --set "cainjector.image.repository=${{ vars.ECR_REGISTRY }}/quay-io/jetstack/cert-manager-cainjector" \
+            --set "webhook.image.repository=${{ vars.ECR_REGISTRY }}/quay-io/jetstack/cert-manager-webhook" \
+            --set "startupapicheck.image.repository=${{ vars.ECR_REGISTRY }}/quay-io/jetstack/cert-manager-startupapicheck" \
+            --atomic --timeout=5m
+
+      # ── s3-lister via ArgoCD ──────────────────────────────────────────────
+      # ECR_REGISTRY placeholder substituted here — not stored in git
+      - name: Deploy s3-lister Application
+        run: |
+          sed "s|ECR_REGISTRY|${{ vars.ECR_REGISTRY }}|g" app/argocd/application.yaml | kubectl apply -f -
+
+      - name: Summary
+        run: |
+          echo "=== Platform Bootstrap Complete ==="
+          echo ""
+          echo "Traefik NLB:"
+          kubectl get svc -n traefik traefik -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' && echo ""
+          echo ""
+          echo "ArgoCD admin password:"
+          kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d && echo ""
+          echo ""
+          echo "ARC Runner status:"
+          kubectl get pods -n arc-runners

@@ -1,0 +1,123 @@
+# Infrastructure Apply — provisions all AWS resources via OpenTofu
+#
+# Auth: static IAM credentials (GitHub Secrets)
+# Why NOT OIDC: OIDC role is created by this workflow — chicken-and-egg
+#
+# Required GitHub Secrets (Settings → Secrets → Actions):
+#   AWS_ACCESS_KEY_ID        — IAM user access key
+#   AWS_SECRET_ACCESS_KEY    — IAM user secret key
+#   DOCKER_HUB_USERNAME      — Docker Hub username (for ECR pull-through cache secret)
+#   DOCKER_HUB_ACCESS_TOKEN  — Docker Hub PAT    (for ECR pull-through cache secret)
+#
+# After first run: set ECR_REGISTRY variable from logs → then run bootstrap workflow
+
+name: Infra Apply
+
+on:
+  workflow_dispatch:  # always manual — infra changes need human intent
+  push:
+    branches: [main]
+    paths:
+      - "iac/**"
+
+concurrency:
+  group: infra
+  cancel-in-progress: false  # never cancel in-flight infra changes
+
+env:
+  AWS_REGION: us-east-1
+  TF_VAR_aws_profile: ""  # empty = use env credentials (not named profile)
+
+jobs:
+  apply:
+    name: OpenTofu Apply
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+
+      # ── Bootstrap: state bucket (idempotent) ─────────────────────────────
+      # Must run before tofu init — tofu needs this bucket for remote state
+      - name: Create State Backend (idempotent)
+        run: |
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET="devops-lab-tofu-state-${ACCOUNT}"
+          echo "ACCOUNT=${ACCOUNT}" >> $GITHUB_ENV
+          echo "STATE_BUCKET=${BUCKET}" >> $GITHUB_ENV
+
+          # Create bucket only if it doesn't exist
+          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            echo "State bucket already exists: $BUCKET"
+          else
+            echo "Creating state bucket: $BUCKET"
+            aws s3api create-bucket --bucket "$BUCKET" --region ${{ env.AWS_REGION }}
+            aws s3api put-bucket-versioning --bucket "$BUCKET" \
+              --versioning-configuration Status=Enabled
+            aws s3api put-bucket-encryption --bucket "$BUCKET" \
+              --server-side-encryption-configuration \
+              '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"},"BucketKeyEnabled":true}]}'
+            aws s3api put-public-access-block --bucket "$BUCKET" \
+              --public-access-block-configuration \
+              "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+          fi
+
+      # ── Bootstrap: Docker Hub secret (idempotent) ────────────────────────
+      # Must exist before tofu apply — main.tf references it as a data source
+      - name: Create Docker Hub Secret in Secrets Manager (idempotent)
+        env:
+          DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
+          DOCKER_HUB_ACCESS_TOKEN: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+        run: |
+          SECRET_NAME="ecr-pullthroughcache/docker-hub"
+          SECRET_VALUE="{\"username\":\"${DOCKER_HUB_USERNAME}\",\"accessToken\":\"${DOCKER_HUB_ACCESS_TOKEN}\"}"
+
+          if aws secretsmanager describe-secret --secret-id "$SECRET_NAME" 2>/dev/null; then
+            echo "Secret exists — updating value"
+            aws secretsmanager put-secret-value \
+              --secret-id "$SECRET_NAME" \
+              --secret-string "$SECRET_VALUE"
+          else
+            echo "Creating secret: $SECRET_NAME"
+            aws secretsmanager create-secret \
+              --region ${{ env.AWS_REGION }} \
+              --name "$SECRET_NAME" \
+              --secret-string "$SECRET_VALUE"
+          fi
+
+      # ── OpenTofu ──────────────────────────────────────────────────────────
+      - name: OpenTofu Init
+        working-directory: iac/envs/dev
+        run: tofu init
+
+      - name: OpenTofu Apply
+        working-directory: iac/envs/dev
+        run: tofu apply -auto-approve --var-file=dev.tfvars
+
+      # ── Print outputs ─────────────────────────────────────────────────────
+      # Copy these values into GitHub Variables after this workflow completes
+      - name: Print Outputs
+        working-directory: iac/envs/dev
+        run: |
+          echo "=================================================="
+          echo "Set these as GitHub Variables (Settings → Variables):"
+          echo ""
+          echo "  ECR_REGISTRY  = $(tofu output -raw ecr_registry)"
+          echo "  CLUSTER_NAME  = $(tofu output -raw cluster_name)"
+          echo ""
+          echo "The following is already set in bootstrap.yaml:"
+          echo "  AWS_ROLE_ARN  = $(tofu output -raw github_actions_role_arn)"
+          echo "=================================================="

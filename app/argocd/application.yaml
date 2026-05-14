@@ -1,0 +1,33 @@
+# ArgoCD Application — s3-lister GitOps deployment
+# ArgoCD watches this repo + path, auto-syncs on any git change
+# ECR_REGISTRY placeholder gets substituted by bootstrap workflow via sed
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: s3-lister
+  namespace: argocd
+  finalizers:
+    # Ensures ArgoCD deletes all child resources before Application is removed
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/imsameerkhan12/devops-master-prep
+    targetRevision: main
+    path: app/s3-lister/chart
+    helm:
+      parameters:
+        - name: image.init
+          value: "ECR_REGISTRY/docker-hub/amazon/aws-cli:latest"
+        - name: image.nginx
+          value: "ECR_REGISTRY/docker-hub/library/nginx:alpine"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true      # delete resources removed from git
+      selfHeal: true   # revert manual kubectl changes
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

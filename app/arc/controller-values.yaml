@@ -1,0 +1,12 @@
+# ARC Controller — gha-runner-scale-set-controller Helm values
+# Manages RunnerSet lifecycle: watches GitHub, creates/deletes runner pods
+# Namespace: arc-systems
+# Install: helm upgrade --install arc-controller oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller
+#          -n arc-systems --create-namespace -f app/arc/controller-values.yaml
+#          --set "image.repository=<ECR_REGISTRY>/ghcr-io/actions/gha-runner-scale-set-controller"
+#          --version 0.10.1
+
+image:
+  # Override on deploy: --set image.repository=<ECR_REGISTRY>/ghcr-io/actions/gha-runner-scale-set-controller
+  repository: "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/ghcr-io/actions/gha-runner-scale-set-controller"
+  pullPolicy: IfNotPresent

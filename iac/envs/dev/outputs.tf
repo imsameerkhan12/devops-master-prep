@@ -35,3 +35,13 @@ output "s3_reader_role_arn" {
   description = "IAM role ARN for s3-reader Pod Identity"
   value       = aws_iam_role.s3_reader.arn
 }
+
+output "github_actions_role_arn" {
+  description = "Set this as AWS_ROLE_ARN in GitHub repo variables (Settings → Variables)"
+  value       = aws_iam_role.github_actions.arn
+}
+
+output "ecr_registry" {
+  description = "Set this as ECR_REGISTRY in GitHub repo variables"
+  value       = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
+}

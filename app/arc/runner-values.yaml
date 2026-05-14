@@ -1,0 +1,23 @@
+# ARC RunnerSet — gha-runner-scale-set Helm values
+# Each runner = ephemeral pod — spawns on job trigger, dies after job completes
+# Namespace: arc-runners
+# Install: helm upgrade --install arc-runner-set oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
+#          -n arc-runners --create-namespace -f app/arc/runner-values.yaml
+#          --set "template.spec.containers[0].image=<ECR_REGISTRY>/ghcr-io/actions/actions-runner:latest"
+#          --version 0.10.1
+
+# GitHub App auth — secret created by bootstrap workflow
+githubConfigUrl: "https://github.com/imsameerkhan12"
+githubConfigSecret: "arc-github-app-secret"
+
+# Scale to zero when idle — no cost for idle runners
+minRunners: 0
+maxRunners: 5
+
+template:
+  spec:
+    containers:
+      - name: runner
+        # Override on deploy: --set template.spec.containers[0].image=<ECR_REGISTRY>/ghcr-io/actions/actions-runner:latest
+        # Nodes are in private subnets — image must come from ECR pull-through cache
+        image: "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/ghcr-io/actions/actions-runner:latest"

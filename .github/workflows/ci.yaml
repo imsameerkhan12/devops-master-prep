@@ -1,0 +1,72 @@
+# CI — Lint, validate, and verify s3-lister Helm chart
+#
+# Runs on: ARC runner (arc-runner-set) — self-hosted inside EKS
+# Why ARC: has VPC access, closer to the cluster, demonstrates ARC is working
+#
+# For apps with a custom Docker build, this workflow would also:
+#   1. Build Docker image
+#   2. Push to ECR
+#   3. Update image tag in values.yaml + commit (GitOps trigger)
+#   4. ArgoCD detects git change → auto-deploys
+#
+# s3-lister uses standard images (nginx, aws-cli) so no build step is needed.
+# ArgoCD auto-syncs on any chart change pushed to main.
+
+name: CI
+
+on:
+  pull_request:
+    paths:
+      - "app/s3-lister/**"
+  push:
+    branches: [main]
+    paths:
+      - "app/s3-lister/**"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-validate:
+    name: Helm Lint + Validate
+    runs-on: arc-runner-set  # self-hosted ARC runner in EKS
+
+    permissions:
+      id-token: write  # OIDC for AWS (needed if job touches AWS)
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Helm Lint
+        run: helm lint app/s3-lister/chart
+
+      - name: Helm Template (render + validate YAML)
+        run: |
+          helm template s3-lister app/s3-lister/chart \
+            --set "image.init=test/aws-cli:latest" \
+            --set "image.nginx=test/nginx:alpine"
+
+      # Verify ArgoCD Application manifest is valid YAML
+      - name: Validate ArgoCD Application manifest
+        run: |
+          python3 -c "
+          import yaml, sys
+          with open('app/argocd/application.yaml') as f:
+              doc = yaml.safe_load(f)
+          assert doc['kind'] == 'Application', 'Expected ArgoCD Application kind'
+          print('ArgoCD Application manifest: valid')
+          "
+
+      # On main branch: trigger ArgoCD hard refresh (force re-check of git)
+      # ArgoCD auto-sync handles the actual deploy — no kubectl apply needed here
+      - name: Trigger ArgoCD Refresh (main only)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          kubectl annotate application s3-lister -n argocd \
+            argocd.argoproj.io/refresh=hard --overwrite || true

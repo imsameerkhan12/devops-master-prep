@@ -1,0 +1,28 @@
+# ArgoCD Helm values
+# All images overridden to ECR pull-through cache (nodes in private subnets)
+# Override on deploy: --set global.image.repository=<ECR_REGISTRY>/quay-io/argoproj/argocd
+#                     --set redis.image.repository=<ECR_REGISTRY>/docker-hub/library/redis
+
+global:
+  image:
+    # quay.io/argoproj/argocd via ECR pull-through cache
+    repository: "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/quay-io/argoproj/argocd"
+    pullPolicy: IfNotPresent
+
+# Disable dex — SSO not needed in dev
+dex:
+  enabled: false
+
+redis:
+  image:
+    # docker.io/library/redis via existing docker-hub pull-through cache
+    repository: "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/docker-hub/library/redis"
+    tag: "7-alpine"
+
+server:
+  service:
+    type: ClusterIP
+  configs:
+    params:
+      # Traefik handles TLS — argocd-server runs plain HTTP internally
+      server.insecure: "true"
