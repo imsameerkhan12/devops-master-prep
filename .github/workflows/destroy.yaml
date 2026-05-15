@@ -184,7 +184,7 @@ jobs:
             fi
           fi
 
-          tofu destroy -auto-approve --var-file=dev.tfvars --var='aws_profile='
+          tofu destroy -auto-approve -parallelism=20 --var-file=dev.tfvars --var='aws_profile='
 
       # ── Optional: delete state bucket ─────────────────────────────────────
       # Only runs if destroy_state_bucket=true in workflow inputs

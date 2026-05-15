@@ -130,7 +130,7 @@ jobs:
 
       - name: OpenTofu Apply
         working-directory: iac/envs/dev
-        run: tofu apply -auto-approve --var-file=dev.tfvars --var='aws_profile='
+        run: tofu apply -auto-approve -parallelism=20 --var-file=dev.tfvars --var='aws_profile='
 
       # ── Print outputs ─────────────────────────────────────────────────────
       # Copy these values into GitHub Variables after this workflow completes

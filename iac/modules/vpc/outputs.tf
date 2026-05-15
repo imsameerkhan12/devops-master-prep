@@ -20,7 +20,3 @@ output "vpc_cidr" {
   value = module.vpc.vpc_cidr_block
 }
 
-output "endpoints_security_group_id" {
-  description = "SG ID for VPC endpoints — EKS cluster SG bhi isko allow karega"
-  value       = aws_security_group.endpoints.id
-}
