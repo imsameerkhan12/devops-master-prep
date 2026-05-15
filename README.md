@@ -1,107 +1,103 @@
-# DevOps Master Prep — Sameer Khan
+# DevOps Interview Prep — Sameer Khan
 
-**15-day structured interview prep** | Senior DevOps / Cloud Engineer  
-**Goal:** Interview-ready across AWS, K8s, OpenTofu, CI/CD, Observability, System Design
-
----
-
-## Roadmap at a Glance
-
-| Phase | Days | Focus | Outcome |
-|-------|------|-------|---------|
-| [Phase 1: Foundation](phase-1-foundation/) | 1–3 | Linux, Networking, STAR Stories | Behavioral confidence |
-| [Phase 2: Cloud Core](phase-2-cloud-core/) | 4–7 | AWS deep, Azure refresh, GCP touch | Cloud rust removed |
-| [Phase 3: Kubernetes](phase-3-kubernetes/) | 8–10 | K8s deep, Helm, troubleshooting | K8s production-ready |
-| [Phase 4: IaC + CI/CD](phase-4-iac-cicd/) | 11–12 | OpenTofu, Pulumi, GitHub Actions | Pipeline fluency |
-| [Phase 5: Observability](phase-5-observability/) | 13 | Prometheus, Grafana, OTel, Logging | Triage skills |
-| [Phase 6: Polish](phase-6-mock-polish/) | 14–15 | Mock interviews, system design | Interview-ready |
+> 5 yrs · CKA · AZ-204 · EKS + OpenTofu + GitOps
 
 ---
 
-## Repo Structure
+## Where are you right now?
 
-```
-DEVOPS-REMASTER/
-├── 00-guide/                          # The original PDF prep guide
-├── phase-1-foundation/
-│   ├── day-01-setup-and-star-stories/
-│   ├── day-02-linux-fundamentals/
-│   └── day-03-networking-deep/
-├── phase-2-cloud-core/
-│   ├── day-04-aws-networking-iam/
-│   ├── day-05-aws-compute-storage-eks/
-│   ├── day-06-aws-specialized-azure/
-│   └── day-07-aws-practical-gcp/
-├── phase-3-kubernetes/
-│   ├── day-08-k8s-core-pod-lifecycle/
-│   ├── day-09-k8s-networking-storage-security/
-│   └── day-10-helm-troubleshooting-patterns/
-├── phase-4-iac-cicd/
-│   ├── day-11-terraform-pulumi/
-│   └── day-12-github-actions-azure-devops/
-├── phase-5-observability/
-│   └── day-13-prometheus-grafana-otel-logging/
-├── phase-6-mock-polish/
-│   ├── day-14-system-design-mock/
-│   └── day-15-final-mock-stories/
-├── reference/
-│   ├── interview-questions/           # Top 50 Q&A answers
-│   ├── system-design-templates/       # Design frameworks + templates
-│   ├── behavioral-stories/            # 6 STAR stories
-│   └── cheatsheets/                   # Quick-lookup references
-└── scripts/                           # Shell scripts for hands-on practice
-```
-
-Each day folder has:
-- `notes/` — your notes written in own words after study
-- `hands-on/` — scripts, YAMLs, configs from lab practice
+| I need to... | Go here |
+|---|---|
+| Interview in < 1 hour | [00-interview-day/15-min-refresh.md](00-interview-day/15-min-refresh.md) |
+| Review a topic (30-60 min) | [01-cheatsheets/](01-cheatsheets/) |
+| Do a hands-on lab session | [02-labs/](02-labs/) |
+| Start or stop the EKS cluster | [02-labs/cluster-lifecycle.md](02-labs/cluster-lifecycle.md) |
+| Study a topic deeply (2-3 hrs) | [03-deep-dive/](03-deep-dive/) |
+| Find a real production bug I debugged | [04-gotchas/eks-incidents.md](04-gotchas/eks-incidents.md) |
+| Prep for project architecture questions | [00-interview-day/project-guide.md](00-interview-day/project-guide.md) |
+| Prep for company-specific STAR questions | [00-interview-day/resume-guide.md](00-interview-day/resume-guide.md) |
 
 ---
 
-## Golden Rules
+## 00 — Interview Day
 
-- **Active > Passive:** After every video/doc, write it in your own words. Can't write = didn't understand.
-- **Hands-on mandatory:** Deploy something every single day.
-- **Resume-first:** For every topic, connect it to a project on your resume.
-- **80% of 100 > 100% of 20:** Move on. Don't chase perfection.
-- **Sleep 7+:** Memory consolidates during sleep. Non-negotiable.
+> Open this folder the morning of the interview. Read in this order.
 
----
-
-## Practice Notes — Day Wise
-
-> Har din ke notes yahan se directly open karo. Practice file = hands-on log + concepts apne shabdon mein.
-
-| Day | Topic | Notes (Theory) | Practice (Hands-on) | Status |
-|-----|-------|---------------|---------------------|--------|
-| Day 1 | Setup + STAR Stories | [README](phase-1-foundation/day-01-setup-and-star-stories/notes/README.md) | — | ✅ |
-| Day 2 | Linux Fundamentals | [README](phase-1-foundation/day-02-linux-fundamentals/notes/README.md) | [practice.md](phase-1-foundation/day-02-linux-fundamentals/notes/practice.md) | ✅ |
-| Day 3 | Networking Deep | [README](phase-1-foundation/day-03-networking-deep/notes/README.md) | [practice.md](phase-1-foundation/day-03-networking-deep/notes/practice.md) | ✅ |
-| Day 4 | AWS Networking + IAM | [README](phase-2-cloud-core/day-04-aws-networking-iam/notes/README.md) | [practice.md](phase-2-cloud-core/day-04-aws-networking-iam/notes/practice.md) | ✅ |
-| Day 5 | AWS Compute + EKS | [README](phase-2-cloud-core/day-05-aws-compute-storage-eks/notes/README.md) | [practice.md](phase-2-cloud-core/day-05-aws-compute-storage-eks/notes/practice.md) | ✅ |
-| Day 6 | AWS Specialized + Azure | [README](phase-2-cloud-core/day-06-aws-specialized-azure/notes/README.md) | — | ⏳ |
-| Day 7 | AWS Practical + GCP | [README](phase-2-cloud-core/day-07-aws-practical-gcp/notes/README.md) | — | ⏳ |
-| Day 8 | K8s Core + Pod Lifecycle | [README](phase-3-kubernetes/day-08-k8s-core-pod-lifecycle/notes/README.md) | — | ⏳ |
-| Day 9 | K8s Networking + Storage | [README](phase-3-kubernetes/day-09-k8s-networking-storage-security/notes/README.md) | — | ⏳ |
-| Day 10 | Helm + Troubleshooting | [README](phase-3-kubernetes/day-10-helm-troubleshooting-patterns/notes/README.md) | — | ⏳ |
-| Day 11 | OpenTofu + Pulumi | [README](phase-4-iac-cicd/day-11-terraform-pulumi/notes/README.md) | [practice.md](phase-4-iac-cicd/day-11-terraform-pulumi/notes/practice.md) · [RUNBOOK](phase-4-iac-cicd/day-11-terraform-pulumi/notes/RUNBOOK.md) | ✅ |
-| Day 12 | GitHub Actions + ARC + ArgoCD | [README](phase-4-iac-cicd/day-12-github-actions-azure-devops/notes/README.md) | [practice.md](phase-4-iac-cicd/day-12-github-actions-azure-devops/notes/practice.md) · [RUNBOOK](phase-4-iac-cicd/day-12-github-actions-azure-devops/notes/RUNBOOK.md) | 🔄 |
-| Day 13 | Prometheus + Grafana + OTel | [README](phase-5-observability/day-13-prometheus-grafana-otel-logging/notes/README.md) | — | ⏳ |
-| Day 14 | System Design Mock | [README](phase-6-mock-polish/day-14-system-design-mock/notes/README.md) | — | ⏳ |
-| Day 15 | Final Mock + Stories | [README](phase-6-mock-polish/day-15-final-mock-stories/notes/README.md) | — | ⏳ |
-
-**Status:** ✅ Done · 🔄 In Progress · ⏳ Pending
+| File | What's in it | When |
+|---|---|---|
+| [15-min-refresh.md](00-interview-day/15-min-refresh.md) | K8s · AWS · IaC · Observability rapid fire + 5 mindset rules | 30 min before |
+| [star-stories.md](00-interview-day/star-stories.md) | 6 STAR stories — memorize the arc, not word-for-word | Night before |
+| [questions-to-ask.md](00-interview-day/questions-to-ask.md) | 10 smart questions for the interviewer | Last 5 min |
+| [project-guide.md](00-interview-day/project-guide.md) | EKS lab — architecture diagram, 15 pre-loaded Q&A, numbers to quote | Deep project prep |
+| [resume-guide.md](00-interview-day/resume-guide.md) | All 3 companies — context blocks, STAR stories, tech explainers, trap questions | Company prep |
 
 ---
 
-## Reference Links
+## 01 — Cheatsheets
 
-- [Top 50 Interview Questions](reference/interview-questions/top-50.md)
-- [Day-of-Interview Cheatsheet](reference/cheatsheets/day-of-interview.md)
-- [System Design Templates](reference/system-design-templates/)
-- [STAR Behavioral Stories](reference/behavioral-stories/)
-- [Original PDF Guide](00-guide/Sameer_DevOps_Master_Prep_Guide.pdf)
+> Quick review. One file per session. Don't read all at once.
+
+| File | Covers |
+|---|---|
+| [linux-networking.md](01-cheatsheets/linux-networking.md) | Linux · Networking · AWS · IAM · HA/DR · Well-Architected |
+| [kubernetes.md](01-cheatsheets/kubernetes.md) | EKS · Pod lifecycle · Networking · Storage · Helm · Autoscaling |
+| [platform.md](01-cheatsheets/platform.md) | Secrets · GitOps · OpenTofu · CI/CD · cert-manager · Observability |
+| [interview-qa.md](01-cheatsheets/interview-qa.md) | Q&A rapid fire · Hindi analogies |
+| [kubectl-commands.md](01-cheatsheets/kubectl-commands.md) | kubectl reference — troubleshooting, rollouts, RBAC, node ops |
 
 ---
 
-*Tu rusty hai, weak nahi. Rust 15 din mein hat jaati hai. Chal shuru kar.*
+## 02 — Labs
+
+> Hands-on sessions. Cluster costs $5-8/hr — start it, do the session, destroy same day.
+
+| File | What you'll do |
+|---|---|
+| [cluster-lifecycle.md](02-labs/cluster-lifecycle.md) | Start/stop cluster · full runbook · destroy order · port forwards |
+| [hands-on-remaining.md](02-labs/hands-on-remaining.md) | Prioritized task list — Tier 1 (core) → Tier 2 → Tier 3 |
+| [session-a-monitoring.md](02-labs/session-a-monitoring.md) | kube-prometheus-stack · PromQL · RED dashboard · Alloy · Loki · ServiceMonitor |
+| [session-b-autoscaling.md](02-labs/session-b-autoscaling.md) | HPA · KEDA · PDB · VPA |
+| [session-c-gitops.md](02-labs/session-c-gitops.md) | ArgoCD · External Secrets Operator |
+| [session-d-policies.md](02-labs/session-d-policies.md) | NetworkPolicy · ResourceQuota · LimitRange |
+
+---
+
+## 03 — Deep Dive
+
+> Study a topic from first principles. 2-3 hour sessions. Your original study notes.
+
+| Folder | What's inside |
+|---|---|
+| [foundation/](03-deep-dive/foundation/) | Day 1-3: Linux, Networking, STAR stories setup |
+| [cloud-core/](03-deep-dive/cloud-core/) | Day 4-7: AWS Networking, IAM, Compute, EKS, Azure, GCP |
+| [kubernetes/](03-deep-dive/kubernetes/) | Day 8-10: K8s internals, Networking, Storage, Helm |
+| [iac-cicd/](03-deep-dive/iac-cicd/) | Day 11-12: OpenTofu, GitHub Actions, Azure DevOps |
+| [observability/](03-deep-dive/observability/) | Day 13: Prometheus, Grafana, OTel, Logging |
+| [mock-sessions/](03-deep-dive/mock-sessions/) | Day 14-15: System design mock, final mock + stories |
+
+---
+
+## 04 — Gotchas
+
+> Real production incidents you personally debugged. Your strongest interview answers.
+
+| File | What's in it |
+|---|---|
+| [eks-incidents.md](04-gotchas/eks-incidents.md) | 5 real debug logs + 10 production gotcha patterns |
+| [top-50-qa.md](04-gotchas/top-50-qa.md) | Top 50 interview Q&A — K8s, AWS, IaC, Observability, Behavioral |
+| [system-design.md](04-gotchas/system-design.md) | 5 system design templates + universal 15-min framework |
+
+---
+
+## Infrastructure + App (not study material)
+
+| | |
+|---|---|
+| [iac/](iac/) | OpenTofu modules — VPC, EKS |
+| [app/](app/) | s3-lister Helm chart + app code |
+| [.github/workflows/](.github/workflows/) | CI/CD: infra-apply · bootstrap · ci · destroy |
+| [00-guide/](00-guide/) | Original PDF prep guide + resume PDF |
+
+---
+
+*"Tu rusty hai, weak nahi. Rust 15 din mein hat jaati hai."*
