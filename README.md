@@ -1,7 +1,6 @@
 # DevOps Master Prep — Sameer Khan
 
 **15-day structured interview prep** | Senior DevOps / Cloud Engineer  
-**Daily:** 10:00 AM – 1:00 PM (3 hours) | **Total:** 45 hours  
 **Goal:** Interview-ready across AWS, K8s, OpenTofu, CI/CD, Observability, System Design
 
 ---
@@ -16,18 +15,6 @@
 | [Phase 4: IaC + CI/CD](phase-4-iac-cicd/) | 11–12 | OpenTofu, Pulumi, GitHub Actions | Pipeline fluency |
 | [Phase 5: Observability](phase-5-observability/) | 13 | Prometheus, Grafana, OTel, Logging | Triage skills |
 | [Phase 6: Polish](phase-6-mock-polish/) | 14–15 | Mock interviews, system design | Interview-ready |
-
----
-
-## Daily Routine (3 hours)
-
-| Time | Activity | Why |
-|------|----------|-----|
-| 10:00 – 10:15 | Previous day quick recap | Memory consolidation |
-| 10:15 – 11:30 | New topic — video + docs | Core learning (75 min) |
-| 11:30 – 11:45 | Break (chai, walk) | Brain reset |
-| 11:45 – 12:45 | Hands-on lab / practice | Implementation muscle |
-| 12:45 – 1:00 | Write notes in own words | Retention boost |
 
 ---
 
