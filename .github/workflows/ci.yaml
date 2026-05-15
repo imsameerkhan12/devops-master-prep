@@ -20,23 +20,16 @@ env:
 
 jobs:
   # ── Job 1: Lint + Template — runs on every PR and push ──────────────────────
-  # No AWS access needed — pure local Helm operations
   lint:
     name: Helm Lint + Template
-    runs-on: arc-runner-set
+    runs-on: ubuntu-latest
 
     permissions:
-      contents: read   # checkout only — no AWS/OIDC needed for lint
+      contents: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Cache Helm binary
-        uses: actions/cache@v4
-        with:
-          path: ~/.local/bin/helm
-          key: helm-${{ runner.os }}-v3
 
       - name: Setup Helm
         uses: azure/setup-helm@v4
@@ -51,10 +44,9 @@ jobs:
             --set image.nginx=${{ vars.ECR_REGISTRY }}/docker-hub/library/nginx:alpine
 
   # ── Job 2: Deploy — only on merge to main ───────────────────────────────────
-  # Runs AFTER lint passes. Requires AWS OIDC + kubectl.
   deploy:
     name: Deploy
-    runs-on: arc-runner-set
+    runs-on: ubuntu-latest
     needs: lint
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
@@ -66,33 +58,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── Tooling — cached so only downloaded once per runner OS ──────────────
-      - name: Cache AWS CLI
-        id: cache-awscli
-        uses: actions/cache@v4
-        with:
-          path: /usr/local/aws-cli
-          key: awscli-${{ runner.os }}-v2
-
-      - name: Install AWS CLI v2
-        if: steps.cache-awscli.outputs.cache-hit != 'true'
-        run: |
-          curl -sSfL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
-          unzip -q /tmp/awscliv2.zip -d /tmp/
-          sudo /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
-          rm -rf /tmp/aws /tmp/awscliv2.zip
-
-      - name: Link cached AWS CLI
-        if: steps.cache-awscli.outputs.cache-hit == 'true'
-        run: sudo ln -sf /usr/local/aws-cli/v2/current/bin/aws /usr/local/bin/aws
-
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
 
       - name: Setup Helm
         uses: azure/setup-helm@v4
 
-      # ── AWS auth ─────────────────────────────────────────────────────────────
       - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -105,9 +76,7 @@ jobs:
             --name "${{ vars.CLUSTER_NAME }}" \
             --region "${{ env.AWS_REGION }}"
 
-      # ── Deploy ───────────────────────────────────────────────────────────────
-      # --atomic = waits for rollout + auto-rollback on failure.
-      # No need for a separate kubectl rollout status step after this.
+      # --atomic = waits for rollout + auto-rollback on failure
       - name: Deploy s3-lister
         run: |
           helm upgrade --install s3-lister app/s3-lister/chart \

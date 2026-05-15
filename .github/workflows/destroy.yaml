@@ -105,100 +105,25 @@ jobs:
         run: helm uninstall traefik -n traefik --ignore-not-found --wait 2>/dev/null || true
 
       # ── Wait for NLB to fully delete ──────────────────────────────────────
-      # NLB ENIs stay attached to subnets for ~60s after service deletion
-      # If tofu destroy runs while NLBs exist → VPC deletion fails (DependencyViolation)
+      # Traefik uninstall triggers NLB deletion via cloud controller. ENIs stay
+      # attached for ~60s after the LB is gone — force-delete any survivors.
       - name: Wait for NLB deletion
         run: |
           echo "Waiting 60s for NLB to release ENIs..."
           sleep 60
 
-          VPC_ID=$(aws eks describe-cluster \
-            --name ${{ vars.CLUSTER_NAME }} \
-            --query 'cluster.resourcesVpcConfig.vpcId' \
+          # Force-delete any NLBs still alive (cloud controller may lag)
+          LBS=$(aws elbv2 describe-load-balancers \
+            --query 'LoadBalancers[?Type==`network`].LoadBalancerArn' \
             --output text 2>/dev/null || echo "")
-
-          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
-            LBS=$(aws elbv2 describe-load-balancers \
-              --query "LoadBalancers[?VpcId=='${VPC_ID}'].LoadBalancerArn" \
-              --output text)
-            if [ -n "$LBS" ]; then
-              echo "NLBs still exist — force deleting..."
-              for lb in $LBS; do
-                echo "Deleting $lb"
-                aws elbv2 delete-load-balancer --load-balancer-arn "$lb"
-              done
-              sleep 30
-            fi
-            echo "NLBs cleared."
+          if [ -n "$LBS" ] && [ "$LBS" != "None" ]; then
+            for lb in $LBS; do
+              echo "Force-deleting NLB: $lb"
+              aws elbv2 delete-load-balancer --load-balancer-arn "$lb" 2>/dev/null || true
+            done
+            sleep 30
           fi
-
-      # ── Force-clean orphaned ENIs ─────────────────────────────────────────
-      # EKS VPC CNI (aws-node) leaves ENIs in subnets after node group deletion.
-      # These block subnet + security group deletion → DependencyViolation.
-      # Must run after NLB wait, before tofu destroy.
-      - name: Force-clean orphaned ENIs
-        run: |
-          # Get VPC ID — try EKS first, fall back to tag lookup (works after partial destroy)
-          VPC_ID=$(aws eks describe-cluster \
-            --name ${{ vars.CLUSTER_NAME }} \
-            --query 'cluster.resourcesVpcConfig.vpcId' \
-            --output text 2>/dev/null || echo "")
-
-          if [ -z "$VPC_ID" ] || [ "$VPC_ID" = "None" ]; then
-            VPC_ID=$(aws ec2 describe-vpcs \
-              --filters "Name=tag:kubernetes.io/cluster/${{ vars.CLUSTER_NAME }},Values=owned" \
-              --query 'Vpcs[0].VpcId' \
-              --output text 2>/dev/null || echo "")
-          fi
-
-          if [ -z "$VPC_ID" ] || [ "$VPC_ID" = "None" ]; then
-            echo "VPC not found — skipping ENI cleanup"
-            exit 0
-          fi
-
-          echo "VPC: $VPC_ID — force-cleaning ALL ENIs..."
-
-          # Get ALL ENIs in VPC with their status and attachment info
-          aws ec2 describe-network-interfaces \
-            --filters "Name=vpc-id,Values=$VPC_ID" \
-            --query 'NetworkInterfaces[].[NetworkInterfaceId,Status,Attachment.AttachmentId]' \
-            --output text | while read eni status attachment; do
-            [ -z "$eni" ] && continue
-            if [ "$status" = "in-use" ] && [ -n "$attachment" ] && [ "$attachment" != "None" ]; then
-              echo "  Force-detaching $eni (attachment: $attachment)"
-              aws ec2 detach-network-interface --attachment-id "$attachment" --force 2>/dev/null || true
-              sleep 5
-            fi
-            echo "  Deleting $eni"
-            aws ec2 delete-network-interface --network-interface-id "$eni" 2>/dev/null || true
-          done
-
-          # Revoke all SG rules that reference other SGs — breaks dependency chains
-          echo "Revoking cross-SG rules..."
-          aws ec2 describe-security-groups \
-            --filters "Name=vpc-id,Values=$VPC_ID" \
-            --query 'SecurityGroups[].GroupId' \
-            --output text | tr '\t' '\n' | while read sg; do
-            [ -z "$sg" ] && continue
-            # Revoke ingress rules referencing other SGs
-            INGRESS=$(aws ec2 describe-security-group-rules \
-              --filters "Name=group-id,Values=$sg" \
-              --query 'SecurityGroupRules[?!IsEgress && ReferencedGroupInfo!=null].SecurityGroupRuleId' \
-              --output text 2>/dev/null)
-            [ -n "$INGRESS" ] && [ "$INGRESS" != "None" ] && \
-              aws ec2 revoke-security-group-ingress --group-id "$sg" \
-                --security-group-rule-ids $INGRESS 2>/dev/null || true
-            # Revoke egress rules referencing other SGs
-            EGRESS=$(aws ec2 describe-security-group-rules \
-              --filters "Name=group-id,Values=$sg" \
-              --query 'SecurityGroupRules[?IsEgress && ReferencedGroupInfo!=null].SecurityGroupRuleId' \
-              --output text 2>/dev/null)
-            [ -n "$EGRESS" ] && [ "$EGRESS" != "None" ] && \
-              aws ec2 revoke-security-group-egress --group-id "$sg" \
-                --security-group-rule-ids $EGRESS 2>/dev/null || true
-          done
-
-          echo "ENI + SG rule cleanup done."
+          echo "NLBs cleared."
 
       # ── OpenTofu Destroy ──────────────────────────────────────────────────
       - name: OpenTofu Destroy
@@ -230,39 +155,36 @@ jobs:
             [ "$VPC_ID" = "None" ] && VPC_ID=""
           fi
 
-          echo "VPC ID captured: ${VPC_ID:-not found}"
+          echo "VPC ID: ${VPC_ID:-not found}"
 
-          clean_enis() {
-            if [ -z "$VPC_ID" ] || [ "$VPC_ID" = "None" ]; then
-              echo "  No VPC ID — skipping ENI cleanup"
-              return
-            fi
-            echo "  Cleaning ENIs in VPC $VPC_ID..."
-            aws ec2 describe-network-interfaces \
-              --filters "Name=vpc-id,Values=$VPC_ID" \
-              --query 'NetworkInterfaces[].[NetworkInterfaceId,Status,Attachment.AttachmentId]' \
-              --output text | while read eni status attachment; do
-              [ -z "$eni" ] && continue
-              if [ "$status" = "in-use" ] && [ -n "$attachment" ] && [ "$attachment" != "None" ]; then
-                aws ec2 detach-network-interface --attachment-id "$attachment" --force 2>/dev/null || true
+          # Delete VPC Interface Endpoints before destroy — they create ENIs in private
+          # subnets that block subnet deletion with DependencyViolation. Tofu deletes
+          # them too, but ENI teardown is async and takes 2+ minutes after endpoint
+          # deletion. Doing it here gives AWS time to fully clear ENIs before subnets
+          # are destroyed.
+          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+            ENDPOINT_IDS=$(aws ec2 describe-vpc-endpoints \
+              --filters "Name=vpc-id,Values=$VPC_ID" "Name=state,Values=available,pending" \
+              --query 'VpcEndpoints[*].VpcEndpointId' \
+              --output text 2>/dev/null || echo "")
+            if [ -n "$ENDPOINT_IDS" ] && [ "$ENDPOINT_IDS" != "None" ]; then
+              echo "Deleting VPC endpoints: $ENDPOINT_IDS"
+              aws ec2 delete-vpc-endpoints --vpc-endpoint-ids $ENDPOINT_IDS 2>/dev/null || true
+              echo "Waiting for endpoint ENIs to clear..."
+              for i in $(seq 1 24); do
+                ENI_COUNT=$(aws ec2 describe-network-interfaces \
+                  --filters "Name=vpc-id,Values=$VPC_ID" "Name=description,Values=VPC Endpoint*" \
+                  --query 'length(NetworkInterfaces)' --output text 2>/dev/null || echo "0")
+                [ "${ENI_COUNT:-0}" = "0" ] && echo "Endpoint ENIs cleared." && break
+                echo "  ${ENI_COUNT} endpoint ENIs still attached (${i}/24)..."
                 sleep 5
-              fi
-              aws ec2 delete-network-interface --network-interface-id "$eni" 2>/dev/null || true
-            done
-            echo "  ENI cleanup done."
-          }
+              done
+            else
+              echo "No VPC endpoints found."
+            fi
+          fi
 
-          # Destroy with retry — EKS hyperplane ENIs are recreated during teardown
-          # and can block subnet deletion. Clean and retry up to 3 times.
-          for attempt in 1 2 3; do
-            echo "=== tofu destroy attempt ${attempt}/3 ==="
-            tofu destroy -auto-approve --var-file=dev.tfvars --var='aws_profile=' && break
-            [ $attempt -eq 3 ] && { echo "tofu destroy failed after 3 attempts"; exit 1; }
-            echo "Destroy failed — cleaning residual ENIs before retry..."
-            clean_enis
-            echo "Waiting 60s for AWS to release ENIs..."
-            sleep 60
-          done
+          tofu destroy -auto-approve --var-file=dev.tfvars --var='aws_profile='
 
       # ── Optional: delete state bucket ─────────────────────────────────────
       # Only runs if destroy_state_bucket=true in workflow inputs

@@ -1,11 +1,8 @@
 # Bootstrap Platform — installs all platform tools on EKS after tofu apply
 #
 # Runs on: GitHub-hosted runner (ubuntu-latest)
-# Why NOT ARC runner: ARC doesn't exist yet — this workflow installs it
 #
 # Required GitHub repo setup (Settings → Secrets and Variables):
-#   Secrets:
-#     ARC_GITHUB_APP_PRIVATE_KEY  — content of devops-lab-arc.pem (cat the file, paste raw)
 #   Variables:
 #     AWS_ROLE_ARN   — from: tofu output github_actions_role_arn
 #     ECR_REGISTRY   — from: tofu output ecr_registry
@@ -23,7 +20,6 @@ concurrency:
 
 env:
   AWS_REGION: us-east-1
-  ARC_CHART_VERSION: "0.14.0"
   CERT_MANAGER_CHART_VERSION: "1.17.0"
   GATEWAY_API_VERSION: "v1.5.1"
 
@@ -58,12 +54,11 @@ jobs:
       # ── Pre-push images to ECR ────────────────────────────────────────────
       # GitHub-hosted runner has internet — pull from public registries, push to ECR
       # EKS nodes (private subnet, no NAT) then pull from ECR via VPC endpoint
-      # ghcr.io + quay.io require credentials for pull-through cache → pre-push instead
+      # quay.io requires credentials for pull-through cache → pre-push instead
       - name: Pre-push images to ECR
         run: |
           ECR="${{ vars.ECR_REGISTRY }}"
 
-          # ECR login
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
             docker login --username AWS --password-stdin "$ECR"
 
@@ -75,13 +70,6 @@ jobs:
             docker push "$dst"
           }
 
-          # ARC controller — pulled from ECR (controller runs on cluster)
-          # Runner image pulled from ghcr.io directly (nodes in public subnets have internet)
-          push_image \
-            "ghcr.io/actions/gha-runner-scale-set-controller:${{ env.ARC_CHART_VERSION }}" \
-            "${ECR}/ghcr-io/actions/gha-runner-scale-set-controller:${{ env.ARC_CHART_VERSION }}"
-
-          # cert-manager — image version matches chart version
           CM_TAG="v${{ env.CERT_MANAGER_CHART_VERSION }}"
           for img in cert-manager-controller cert-manager-cainjector cert-manager-webhook cert-manager-startupapicheck; do
             push_image \
@@ -104,59 +92,6 @@ jobs:
             -f app/traefik/values.yaml \
             --set "image.registry=${{ vars.ECR_REGISTRY }}" \
             --atomic --timeout=5m
-
-      # ── ARC Controller ────────────────────────────────────────────────────
-      - name: Install ARC Controller
-        run: |
-          helm upgrade --install arc-controller \
-            oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller \
-            --version ${{ env.ARC_CHART_VERSION }} \
-            -n arc-systems --create-namespace \
-            -f app/arc/controller-values.yaml \
-            --set "image.repository=${{ vars.ECR_REGISTRY }}/ghcr-io/actions/gha-runner-scale-set-controller" \
-            --set "image.tag=${{ env.ARC_CHART_VERSION }}" \
-            --atomic --timeout=5m
-
-      # ── ARC GitHub App Secret ─────────────────────────────────────────────
-      # Secret created imperatively — private key must NOT be in git
-      # --dry-run=client -o yaml | kubectl apply = idempotent (safe to re-run)
-      - name: Create ARC GitHub App Secret
-        env:
-          GITHUB_APP_PRIVATE_KEY: ${{ secrets.ARC_GITHUB_APP_PRIVATE_KEY }}
-        run: |
-          kubectl create namespace arc-runners --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create secret generic arc-github-app-secret \
-            -n arc-runners \
-            --from-literal=github_app_id="3710409" \
-            --from-literal=github_app_installation_id="132252489" \
-            --from-literal=github_app_private_key="${GITHUB_APP_PRIVATE_KEY}" \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-      # ── ARC RunnerSet ─────────────────────────────────────────────────────
-      # --atomic waits for the listener pod to be Running, which requires it to
-      # authenticate with GitHub API. 5m gives enough headroom for API latency.
-      - name: Install ARC RunnerSet
-        run: |
-          helm upgrade --install arc-runner-set \
-            oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set \
-            --version ${{ env.ARC_CHART_VERSION }} \
-            -n arc-runners \
-            -f app/arc/runner-values.yaml \
-            --atomic --timeout=5m
-
-      # Verify listener pod is healthy — if this shows 0/1 Ready, check GitHub App secret
-      - name: Verify ARC RunnerSet
-        run: |
-          echo "=== AutoscalingRunnerSet status ==="
-          kubectl get autoscalingrunnerset -n arc-runners
-          echo ""
-          echo "=== Listener pod status ==="
-          kubectl get pods -n arc-runners
-          echo ""
-          echo "=== Controller logs (last 20 lines) ==="
-          kubectl logs -n arc-systems \
-            -l app.kubernetes.io/name=gha-runner-scale-set-controller \
-            --tail=20 || true
 
       # ── cert-manager ─────────────────────────────────────────────────────
       - name: Install cert-manager
@@ -184,9 +119,6 @@ jobs:
           echo ""
           echo "Traefik NLB:"
           kubectl get svc -n traefik traefik -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' && echo ""
-          echo ""
-          echo "ARC Runner status:"
-          kubectl get pods -n arc-runners
           echo ""
           echo "cert-manager status:"
           kubectl get pods -n cert-manager
