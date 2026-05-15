@@ -14,11 +14,7 @@
 name: Infra Apply
 
 on:
-  workflow_dispatch:  # always manual — infra changes need human intent
-  push:
-    branches: [main]
-    paths:
-      - "iac/**"
+  workflow_dispatch:  # manual only — infra changes always need human intent
 
 concurrency:
   group: infra
