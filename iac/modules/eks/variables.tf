@@ -17,7 +17,7 @@ variable "private_subnet_ids" {
 
 variable "node_subnet_ids" {
   type        = list(string)
-  description = "Subnets for node group. Use public subnets for internet access (ARC runners need github.com)."
+  description = "Subnets for node group. Public subnets = direct internet via IGW (no NAT cost)."
 }
 
 variable "node_instance_type" {

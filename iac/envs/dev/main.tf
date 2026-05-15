@@ -28,11 +28,11 @@ module "eks" {
 
   vpc_id             = module.vpc.vpc_id
   private_subnet_ids = module.vpc.private_subnets
-  node_subnet_ids    = module.vpc.public_subnets  # public → nodes get internet → ARC can reach github.com
+  node_subnet_ids    = module.vpc.public_subnets
 
   node_instance_type = var.node_instance_type
   node_desired       = var.node_desired
-  node_min           = 1
+  node_min           = 0
   node_max           = 2
 
   tags = var.tags
@@ -229,37 +229,10 @@ resource "aws_eks_pod_identity_association" "s3_reader" {
 }
 
 # ─────────────────────────────────────────────
-# ECR LAYER — Plain repos for ARC + ArgoCD + cert-manager images
+# ECR LAYER — Plain repos for cert-manager images
 # Images pushed here by bootstrap workflow (GitHub-hosted runner has internet)
-# No pull-through cache needed — ghcr.io/quay.io require credentials for that
+# quay.io requires credentials for pull-through cache → pre-push instead
 # ─────────────────────────────────────────────
-
-# ARC images
-resource "aws_ecr_repository" "ghcr_actions_runner" {
-  name                 = "ghcr-io/actions/actions-runner"
-  image_tag_mutability = "MUTABLE"
-  force_delete         = true
-  image_scanning_configuration { scan_on_push = true }
-  tags = var.tags
-}
-
-resource "aws_ecr_repository" "ghcr_arc_controller" {
-  name                 = "ghcr-io/actions/gha-runner-scale-set-controller"
-  image_tag_mutability = "MUTABLE"
-  force_delete         = true
-  image_scanning_configuration { scan_on_push = true }
-  tags = var.tags
-}
-
-# docker-hub pull-through cache handles redis automatically
-resource "aws_ecr_repository" "docker_hub_redis" {
-  name                 = "docker-hub/library/redis"
-  image_tag_mutability = "MUTABLE"
-  force_delete         = true
-  image_scanning_configuration { scan_on_push = true }
-  tags       = var.tags
-  depends_on = [aws_ecr_pull_through_cache_rule.docker_hub]
-}
 
 # cert-manager images
 resource "aws_ecr_repository" "quay_cert_manager_controller" {
@@ -292,22 +265,6 @@ resource "aws_ecr_repository" "quay_cert_manager_startupapicheck" {
   force_delete         = true
   image_scanning_configuration { scan_on_push = true }
   tags = var.tags
-}
-
-# Lifecycle policies for all new repos (reuse existing local)
-resource "aws_ecr_lifecycle_policy" "ghcr_actions_runner" {
-  repository = aws_ecr_repository.ghcr_actions_runner.name
-  policy     = local.ecr_lifecycle_policy
-}
-
-resource "aws_ecr_lifecycle_policy" "ghcr_arc_controller" {
-  repository = aws_ecr_repository.ghcr_arc_controller.name
-  policy     = local.ecr_lifecycle_policy
-}
-
-resource "aws_ecr_lifecycle_policy" "docker_hub_redis" {
-  repository = aws_ecr_repository.docker_hub_redis.name
-  policy     = local.ecr_lifecycle_policy
 }
 
 resource "aws_ecr_lifecycle_policy" "quay_cert_manager_controller" {

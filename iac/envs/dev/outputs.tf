@@ -23,7 +23,7 @@ output "oidc_provider_arn" {
 
 output "kubectl_config_command" {
   description = "Run this after tofu apply to configure kubectl"
-  value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${var.cluster_name} --profile ${var.aws_profile}"
+  value       = var.aws_profile != "" ? "aws eks update-kubeconfig --region ${var.aws_region} --name ${var.cluster_name} --profile ${var.aws_profile}" : "aws eks update-kubeconfig --region ${var.aws_region} --name ${var.cluster_name}"
 }
 
 output "s3_bucket_name" {

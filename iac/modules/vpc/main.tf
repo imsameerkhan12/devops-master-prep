@@ -13,10 +13,9 @@ module "vpc" {
   private_subnets = var.private_subnets
   public_subnets  = var.public_subnets
 
-  # Nodes in public subnets need public IPs to reach github.com (required for ARC runners)
+  # Nodes in public subnets — public IPs give direct internet via IGW, no NAT cost
   map_public_ip_on_launch = true
 
-  # No NAT Gateway — public subnets use IGW directly for internet access
   enable_nat_gateway = false
   enable_dns_hostnames = true
   enable_dns_support   = true
