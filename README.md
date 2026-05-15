@@ -54,8 +54,6 @@
 | File | What you'll do |
 |---|---|
 | [cluster-lifecycle.md](02-labs/cluster-lifecycle.md) | Start/stop cluster · full runbook · destroy order · port forwards |
-| [runbook-iac.md](02-labs/runbook-iac.md) | OpenTofu create/destroy · prerequisites · DependencyViolation fix |
-| [runbook-cicd.md](02-labs/runbook-cicd.md) | GitHub Actions setup · secrets/variables · recreate after destroy |
 | [hands-on-remaining.md](02-labs/hands-on-remaining.md) | Prioritized task list — Tier 1 (core) → Tier 2 → Tier 3 |
 | [session-a-monitoring.md](02-labs/session-a-monitoring.md) | kube-prometheus-stack · PromQL · RED dashboard · Alloy · Loki · ServiceMonitor |
 | [session-b-autoscaling.md](02-labs/session-b-autoscaling.md) | HPA · KEDA · PDB · VPA |
