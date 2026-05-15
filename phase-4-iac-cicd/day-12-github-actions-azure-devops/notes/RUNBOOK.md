@@ -1,4 +1,4 @@
-# Day 12 RUNBOOK — GitHub Actions + ARC + ArgoCD
+# Day 12 RUNBOOK — GitHub Actions CI/CD
 
 Full lifecycle: one-time setup → create → destroy → recreate.
 
@@ -9,47 +9,26 @@ Full lifecycle: one-time setup → create → destroy → recreate.
 ### Step 1 — Create IAM user for CI
 
 ```bash
-# Create user
 aws iam create-user --user-name github-actions-ci --profile sameer
 
-# Admin access (scope down in real prod)
 aws iam attach-user-policy \
   --user-name github-actions-ci \
   --policy-arn arn:aws:iam::aws:policy/AdministratorAccess \
   --profile sameer
 
-# Create access key — note the output
 aws iam create-access-key --user-name github-actions-ci --profile sameer
 ```
 
-### Step 2 — Create GitHub App for ARC
-
-1. github.com → Settings → Developer settings → GitHub Apps → New GitHub App
-2. Name: `devops-lab-arc` | Homepage: `https://github.com/imsameerkhan12`
-3. **Uncheck Webhook Active**
-4. Permissions:
-   - **Actions: Read & Write**
-   - **Administration: Read & Write** ← REQUIRED for runner registration (easy to miss)
-   - **Metadata: Read-only** (mandatory, auto-selected)
-5. Click Create → note **App ID** (3710409)
-6. Generate private key → downloads `.pem`
-7. Install App on the repo → note **Installation ID** from URL (132252489)
-
-> **githubConfigUrl must be REPO-level for personal accounts:**
-> `https://github.com/imsameerkhan12/devops-master-prep` — NOT user-level URL.
-> Org accounts can use org-level URL. Personal accounts: repo-level only.
-
-### Step 3 — Set GitHub Secrets + Variables (via gh CLI or UI)
+### Step 2 — Set GitHub Secrets + Variables
 
 ```bash
 REPO="imsameerkhan12/devops-master-prep"
 
 # Secrets (sensitive — never in git)
-gh secret set AWS_ACCESS_KEY_ID         --repo $REPO --body "<from step 1>"
-gh secret set AWS_SECRET_ACCESS_KEY     --repo $REPO --body "<from step 1>"
-gh secret set DOCKER_HUB_USERNAME       --repo $REPO --body "imsameerkhan12"
-gh secret set DOCKER_HUB_ACCESS_TOKEN   --repo $REPO --body "<docker hub PAT>"
-gh secret set ARC_GITHUB_APP_PRIVATE_KEY --repo $REPO --body "$(cat ~/Downloads/devops-lab-arc.*.pem)"
+gh secret set AWS_ACCESS_KEY_ID       --repo $REPO --body "<from step 1>"
+gh secret set AWS_SECRET_ACCESS_KEY   --repo $REPO --body "<from step 1>"
+gh secret set DOCKER_HUB_USERNAME     --repo $REPO --body "imsameerkhan12"
+gh secret set DOCKER_HUB_ACCESS_TOKEN --repo $REPO --body "<docker hub PAT>"
 
 # Variables (non-sensitive)
 gh variable set CLUSTER_NAME  --repo $REPO --body "devops-lab-eks"
@@ -63,101 +42,67 @@ gh variable set ECR_REGISTRY  --repo $REPO --body "271169999916.dkr.ecr.us-east-
 
 ## Create Cluster
 
-### Step 4 — Run infra-apply workflow
+### Step 3 — Run infra-apply workflow
 
 ```bash
 gh workflow run infra-apply.yaml --repo imsameerkhan12/devops-master-prep
-
-# Watch progress
 gh run watch --repo imsameerkhan12/devops-master-prep
 ```
 
-Or: **GitHub → Actions → Infra Apply → Run workflow → Run**
+Or: **GitHub → Actions → Infra Apply → Run workflow**
 
-Takes ~15 min. Creates:
-- S3 state bucket (automatic, idempotent)
-- Docker Hub secret in Secrets Manager (automatic, idempotent)
-- VPC + private subnets + VPC endpoints
-- EKS cluster (1x t3.medium node)
-- ECR pull-through caches (docker-hub, ghcr-io, quay-io)
-- ECR repos (pre-created to prevent orphans)
+Takes ~17 min. Creates:
+- S3 state bucket + Docker Hub secret in Secrets Manager (idempotent)
+- VPC + subnets + S3 gateway endpoint (free, no interface endpoints)
+- EKS cluster v1.33 + 2× t3.medium nodes + 6 add-ons
+- ECR pull-through cache (docker-hub) + pre-created repos + lifecycle policies
+- ECR repos for cert-manager (quay-io/jetstack/*)
 - GitHub Actions OIDC provider + IAM role
-- EKS access entry for GitHub Actions role
-- Pod Identity association for s3-reader
+- Pod Identity association for s3-reader app
+- S3 bucket + test objects for s3-lister app
 
-### Step 5 — Set AWS_ROLE_ARN variable (one-time after first apply)
+### Step 4 — Set AWS_ROLE_ARN variable (one-time after first apply)
 
-From workflow logs, copy the role ARN printed in "Print Outputs" step:
+From the "Print Outputs" step in workflow logs:
 
 ```bash
 gh variable set AWS_ROLE_ARN --repo imsameerkhan12/devops-master-prep \
   --body "arn:aws:iam::271169999916:role/devops-lab-eks-github-actions"
 ```
 
-> Same ARN every time tofu recreates it (same account + same role name). Never update again.
+> Same ARN every time tofu recreates it. Never update again.
 
 ---
 
 ## Install Platform Tools
 
-### Step 6 — Run bootstrap workflow
+### Step 5 — Run bootstrap workflow
 
 ```bash
 gh workflow run bootstrap.yaml --repo imsameerkhan12/devops-master-prep
 ```
 
-Or: **GitHub → Actions → Bootstrap Platform → Run workflow → Run**
+Takes ~5-7 min. Installs in order:
+1. Pre-push cert-manager images to ECR (quay.io → ECR, bootstrap runner has internet)
+2. Gateway API CRDs v1.5.1
+3. Traefik (NLB + Gateway API)
+4. cert-manager v1.17.0 (TLS controller, images pulled from ECR)
 
-Takes ~8-10 min. Installs in order:
-1. Gateway API CRDs v1.5.1
-2. Traefik (NLB + Gateway API, via ECR pull-through for docker.io images)
-3. ARC Controller v0.13.0 (arc-systems namespace, image pre-pushed to ECR by bootstrap)
-4. ARC GitHub App Secret (arc-runners namespace, from GitHub Secret)
-5. ARC RunnerSet v0.13.0 (scale 0→5, ephemeral pods, runner image ghcr.io/actions/actions-runner:2.334.0)
-6. cert-manager (TLS controller, cert-manager namespace)
+> CI/CD uses GitHub-hosted runners (ubuntu-latest) — no self-hosted runner setup needed.
 
-> ArgoCD dropped — too heavy for t3.medium (4GB RAM). CI/CD via ARC push model instead.
-
-### Step 7 — Verify
+### Step 6 — Verify
 
 ```bash
 # Traefik NLB URL
 kubectl get svc -n traefik traefik -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
 
-# ARC listener connected (should be Running)
-kubectl get pods -n arc-systems
-
-# ARC scale-to-zero — no pods when idle is CORRECT
-kubectl get pods -n arc-runners   # "No resources found" = healthy
-
 # cert-manager running
 kubectl get pods -n cert-manager
 
-# Trigger CI to test ARC runner:
-git commit --allow-empty -m "test ARC runner" -- app/s3-lister/chart/Chart.yaml
-git push
+# Trigger CI
+git commit --allow-empty -m "test CI" && git push
 gh run list --repo imsameerkhan12/devops-master-prep --workflow CI
 ```
-
-**Verify ARC works:** push any change to `app/s3-lister/**` → CI workflow triggers → ARC spawns runner pod → helm deploy runs.
-
----
-
-## Gotchas
-
-| Problem | Cause | Fix |
-|---|---|---|
-| bootstrap fails with OIDC error | AWS_ROLE_ARN variable not set | Set it from infra-apply logs |
-| ARC listener running but no runners in GitHub Settings | githubConfigUrl is user-level, not repo-level | Change to `https://github.com/USER/REPO` in runner-values.yaml, re-run bootstrap |
-| ARC listener running but no runners in GitHub Settings | GitHub App missing Administration: R+W | Update App permissions → accept in installation → re-run bootstrap |
-| ARC runner pod: ErrImagePull 403 from ECR | Kubelet ECR credential cache poisoned at boot | Runner uses ghcr.io direct (already fixed); in prod: replace node |
-| ARC EphemeralRunner: "Pod has failed to start more than 5 times" | IP exhaustion on t3.medium (17-pod limit) | Prefix delegation enabled in IaC; ensure `tofu apply` ran after that commit |
-| ARC runner exits code 0 in <1 second, empty logs | **ARC 0.10.1 bug**: JIT token consumed by failed pod, retries get dead token | **Fixed**: upgrade to ARC ≥0.12.0 (0.13.0 in bootstrap.yaml). Also delete stale runners: `kubectl delete ephemeralrunner -n arc-runners --all` |
-| Node group recreate → ECR 403 / missing policies | Community module iam_role_additional_policies lost on recreation | Explicit `aws_iam_role_policy_attachment` resources in dev/main.tf (already fixed) |
-| `Ec2SubnetInvalidConfiguration` on node group create | Public subnets missing map_public_ip_on_launch=true | Set in VPC module (already fixed in IaC) |
-| cert-manager webhook CrashLoopBackOff | quay.io images not pre-pushed to ECR yet | Re-run bootstrap — it pre-pushes images before helm install |
-| NLB never gets IP | Traefik image.registry not set | Check bootstrap logs for --set image.registry |
-| destroy workflow 403 on S3 state bucket | OIDC role missing S3 permissions | destroy.yaml now uses static creds (already fixed); S3 perms also added to OIDC role in IaC |
 
 ---
 
@@ -172,56 +117,67 @@ gh workflow run destroy.yaml \
   --field destroy_state_bucket=false
 ```
 
-Or: **GitHub → Actions → Destroy Infrastructure → Run workflow**
-- Type `destroy` in confirm field
-- `destroy_state_bucket`: false = keep state bucket (can recreate cluster)
-- `destroy_state_bucket`: true = delete everything including state (full wipe)
+- `destroy_state_bucket=false` → keeps state bucket, can recreate cluster
+- `destroy_state_bucket=true` → full wipe including state
 
-Takes ~12 min.
+Takes ~10-12 min.
 
-### Option B — manual (if workflow can't reach cluster)
+### Option B — manual (if workflow fails or cluster unreachable)
 
 ```bash
-# 1. Uninstall in order (MUST uninstall Traefik before tofu destroy)
-kubectl delete application s3-lister -n argocd --ignore-not-found
-helm uninstall s3-lister     -n default       --ignore-not-found
-helm uninstall argocd        -n argocd        --ignore-not-found
-helm uninstall cert-manager  -n cert-manager  --ignore-not-found
-helm uninstall arc-runner-set -n arc-runners  --ignore-not-found
-helm uninstall arc-controller -n arc-systems  --ignore-not-found
-helm uninstall traefik       -n traefik       --ignore-not-found
+# 1. Uninstall Helm releases (Traefik must be last — it owns the NLB)
+helm uninstall s3-lister    -n default      --ignore-not-found --wait 2>/dev/null || true
+helm uninstall cert-manager -n cert-manager --ignore-not-found --wait 2>/dev/null || true
+helm uninstall traefik      -n traefik      --ignore-not-found --wait 2>/dev/null || true
 
-# 2. Wait for NLB to be released
+# 2. Wait for NLB to release
 sleep 60
 
-# 3. Verify NLB gone
-aws elbv2 describe-load-balancers --profile sameer \
-  --query "LoadBalancers[?contains(LoadBalancerName,'k8s')].LoadBalancerArn"
+# 3. Delete any remaining NLBs
+aws elbv2 describe-load-balancers \
+  --query 'LoadBalancers[?Type==`network`].LoadBalancerArn' --output text | \
+  xargs -I{} aws elbv2 delete-load-balancer --load-balancer-arn {}
 
-# 4. tofu destroy
+# 4. Destroy infra
 cd iac/envs/dev
-tofu destroy --var-file=dev.tfvars   # profile = sameer (from dev.tfvars)
+tofu init
+tofu destroy -auto-approve -parallelism=20 --var-file=dev.tfvars --var='aws_profile='
 
 # 5. Optional: teardown state bucket
-bash iac/bootstrap/teardown-state-backend.sh
+bash iac/bootstrap/teardown-state-backend.sh --yes
+```
+
+### If destroy gets DependencyViolation on subnets
+
+Root cause: VPC Interface Endpoints create ENIs in private subnets that block deletion.
+The destroy workflow handles this automatically. For manual cleanup:
+
+```bash
+VPC_ID="<your-vpc-id>"
+
+# Delete VPC endpoints first
+aws ec2 describe-vpc-endpoints \
+  --filters "Name=vpc-id,Values=$VPC_ID" "Name=state,Values=available" \
+  --query 'VpcEndpoints[*].VpcEndpointId' --output text | \
+  xargs aws ec2 delete-vpc-endpoints --vpc-endpoint-ids
+
+# Wait for ENIs to release (~2 min), then retry tofu destroy
 ```
 
 ---
 
 ## Recreate After Destroy
 
-If state bucket was NOT deleted:
+State bucket kept (`destroy_state_bucket=false`):
 ```bash
-# Just re-run both workflows — everything is automated
 gh workflow run infra-apply.yaml --repo imsameerkhan12/devops-master-prep
-# wait ~15 min, then:
+# wait ~17 min, then:
 gh workflow run bootstrap.yaml --repo imsameerkhan12/devops-master-prep
 ```
 
-If state bucket WAS deleted:
+State bucket deleted:
 ```bash
-# Re-run setup-state-backend.sh first, then infra-apply
-bash iac/bootstrap/setup-state-backend.sh
+# infra-apply.yaml creates the state bucket automatically before tofu init
 gh workflow run infra-apply.yaml --repo imsameerkhan12/devops-master-prep
 ```
 
@@ -229,12 +185,12 @@ gh workflow run infra-apply.yaml --repo imsameerkhan12/devops-master-prep
 
 ## Workflow Reference
 
-| Workflow | Trigger | Auth | What it does |
-|---|---|---|---|
-| `infra-apply.yaml` | push to `iac/**` or manual | Static IAM creds | Creates state bucket + Secrets Manager secret + tofu apply |
-| `bootstrap.yaml` | manual only | OIDC | Pre-push images to ECR + install Traefik + ARC + cert-manager |
-| `destroy.yaml` | manual only | Static IAM creds | Helm uninstalls + tofu destroy + optional state cleanup |
-| `ci.yaml` | push to `app/s3-lister/**` or PR | ARC runner (self-hosted) | Helm lint + validate; on main: helm upgrade deploy |
+| Workflow | Trigger | Runner | Auth | What it does |
+|---|---|---|---|---|
+| `infra-apply.yaml` | push to `iac/**` or manual | ubuntu-latest | Static IAM creds | Creates state bucket + secret + tofu apply -parallelism=20 |
+| `bootstrap.yaml` | manual only | ubuntu-latest | OIDC | Pre-push images to ECR + install Traefik + cert-manager |
+| `destroy.yaml` | manual only | ubuntu-latest | Static IAM creds | Helm uninstalls + delete VPC endpoints + tofu destroy -parallelism=20 |
+| `ci.yaml` | push/PR to `app/s3-lister/**` | ubuntu-latest | OIDC (deploy job) | lint job: helm lint + template; deploy job: helm upgrade |
 
 ---
 
@@ -246,7 +202,21 @@ gh workflow run infra-apply.yaml --repo imsameerkhan12/devops-master-prep
 | Secret | `AWS_SECRET_ACCESS_KEY` | IAM user secret | If compromised |
 | Secret | `DOCKER_HUB_USERNAME` | `imsameerkhan12` | Never |
 | Secret | `DOCKER_HUB_ACCESS_TOKEN` | Docker Hub PAT | If expired |
-| Secret | `ARC_GITHUB_APP_PRIVATE_KEY` | `.pem` file content | If revoked |
 | Variable | `CLUSTER_NAME` | `devops-lab-eks` | Never |
 | Variable | `ECR_REGISTRY` | `271169999916.dkr.ecr.us-east-1.amazonaws.com` | Never |
 | Variable | `AWS_ROLE_ARN` | `arn:aws:iam::271169999916:role/devops-lab-eks-github-actions` | Never |
+
+---
+
+## Gotchas
+
+| Problem | Cause | Fix |
+|---|---|---|
+| infra-apply fails: data source `ecr-pullthroughcache/docker-hub` not found | Secret doesn't exist yet | infra-apply creates it automatically before tofu init — check step ordering |
+| bootstrap OIDC error | `AWS_ROLE_ARN` variable not set | Set it from infra-apply "Print Outputs" step logs |
+| cert-manager pods ImagePullBackOff | quay.io images not pre-pushed to ECR | Re-run bootstrap — it pre-pushes before helm install |
+| NLB never gets IP | `image.registry` not set for Traefik | Check bootstrap logs for `--set image.registry` |
+| destroy: DependencyViolation on subnets | VPC Interface Endpoints have ENIs in subnets | destroy.yaml handles this automatically; manual fix above |
+| `tofu destroy` fails after 3 attempts | New endpoint ENIs after previous partial destroy | Run destroy workflow again — it re-detects and deletes endpoints |
+| Node group recreate → ECR 403 | IAM policies lost on recreation | Explicit `aws_iam_role_policy_attachment` in dev/main.tf (already fixed) |
+| `Ec2SubnetInvalidConfiguration` on node group | Public subnets missing `map_public_ip_on_launch=true` | Already set in vpc/main.tf |
